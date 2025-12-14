@@ -1,38 +1,16 @@
-# Исключаем из сборки Docker
-
-# Node.js
-node_modules/
-npm-debug.log
-yarn-error.log
-yarn-debug.log
-.pnpm-debug.log
-.npm
-.yarn
-
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
+*.pyc
+*.pyo
+*.pyd
 .Python
-env/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-*.egg-info/
-.installed.cfg
-*.egg
+*.so
 
-# Docker
-.dockerignore
+# Virtual Environment
+venv/
+env/
+.venv/
+ENV/
 
 # IDE
 .idea/
@@ -40,52 +18,28 @@ var/
 *.swp
 *.swo
 
-# Environment variables
-.env
-.env.local
-
-# Build artifacts
+# Build
 build/
 dist/
-out/
-coverage/
-.nyc_output/
-
-# Logs
-logs
-*.log
-
-# Testing
-.hypothesis/
-.coverage
-.coverage.*
-.cache
-test-results/
+*.egg-info/
 
 # OS
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
 
-# Оптимизация для Windows
-Thumbs.db:
-ehthumbs.db
-*.tmp
-*~
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
+# Local config
+.env
+.local
 
-# Исключаем временные файлы
+# Docker
+.dockerignore
+Dockerfile*
+
+# Data
+minio_data/
+rag-service/chroma.db/
+
+# Logs
 *.log
-*.tmp
-
-# Исключаем IDE
-.vs/
-*.swp
-*.swo
+logs/
+*.log.*

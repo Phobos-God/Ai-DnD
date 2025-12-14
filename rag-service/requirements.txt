@@ -41,10 +41,10 @@ minio>=7.1.0
 pyyaml>=6.0
 python-multipart>=0.0.6
 
-# Конфигурация источников пакетов
---find-links https://download.pytorch.org/whl/torch_stable.html
---index-url https://pypi.org/simple/
---extra-index-url https://pypi.org/simple/
+# Источники пакетов перенесены в Dockerfile
+# --find-links https://download.pytorch.org/whl/torch_stable.html
+# --index-url https://pypi.org/simple/
+# --extra-index-url https://pypi.org/simple/
 
 # Отдельные зависимости для быстрой установки
 # Установка по группам для ускорения сборки

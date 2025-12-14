@@ -1,0 +1,96 @@
+# Stage 1: Базовый образ с предустановленными тяжелыми зависимостями
+FROM nvidia/cuda:12.6.0-devel-ubuntu22.04 AS base-deps
+
+# Определение аргументов сборки
+ARG TORCH_VERSION=2.7.1
+ARG CUDA_TAG=cu126
+
+# Установка кэшированного источника пакетов для ускорения сборки
+ENV DEBIAN_FRONTEND=noninteractive
+RUN mkdir -p /etc/apt/apt.conf.d && \
+    echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries && \
+    echo 'Acquire::http::Timeout "60";' > /etc/apt/apt.conf.d/80-timeout
+
+# Установка Python и системных зависимостей
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-dev \
+    python3.11-venv \
+    python3-pip \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/* \
+    \
+    && python3.11 -m pip install --upgrade pip setuptools wheel \
+    \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+WORKDIR /app
+
+# Копирование предварительно загруженных wheel-файлов
+COPY wheels/ /tmp/wheels/
+
+# Установка PyTorch из локальных wheel-файлов
+RUN python3.11 -m pip install --no-cache-dir /tmp/wheels/*.whl
+
+# Проверка установки PyTorch (без проверки CUDA, так как GPU недоступен на этапе сборки)
+RUN python3.11 -c "import torch; print('Torch:', torch.__version__); print('CUDA version:', torch.version.cuda)"
+
+# Создаем отдельный образ для базовых Python-зависимостей
+FROM base-deps AS core-deps
+
+# Копирование app-зависимостей
+COPY requirements-app.txt .
+
+# Установка остальных зависимостей
+RUN pip install --no-cache-dir --disable-pip-version-check --timeout 600 --retries 40 -r requirements-app.txt
+
+# Основной образ приложения (оптимизированный)
+FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04 AS rag-service
+
+# Определение аргументов сборки (дублирование для runtime stage)
+ARG TORCH_VERSION=2.7.1
+ARG CUDA_TAG=cu126
+
+# Установка переменных окружения для CUDA
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+ENV CUDA_VISIBLE_DEVICES=0
+
+# Установка Python
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-venv \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Создание пользователя безопасности
+RUN useradd -m appuser
+
+# Копирование Python-зависимостей из core-deps
+COPY --from=core-deps /usr/local/lib/python3.11 /usr/local/lib/python3.11
+COPY --from=core-deps /usr/local/bin /usr/local/bin
+
+# Установка рабочей директории
+WORKDIR /app
+
+# Копирование приложения
+COPY app/ /app/
+
+# Копирование конфигурации
+COPY config.yaml /app/config.yaml
+
+# Создание директории для векторного хранилища
+RUN mkdir -p /app/chroma.db
+
+# Смена пользователя на безопасного
+USER appuser
+
+# Экспорт порта
+EXPOSE 8080
+
+# Добавление HEALTHCHECK
+HEALTHCHECK CMD curl -f http://localhost:80/health || exit 1
+
+# Запуск приложения
+CMD ["python3.11", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]

@@ -30,7 +30,7 @@ services:
     ports:
       - "9000:9000"  # API
       - "9001:9001"  # Консоль
-    command: server /data --console-address ":9001"
+    command: server /data --console-address ":9001" --address ":9000"
     networks:
       - ai_dnd_network
     restart: unless-stopped
@@ -121,14 +121,14 @@ services:
   rag-service:
     build: 
       context: ../../rag-service
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.prod
     container_name: ai_dnd_rag_service
     ports:
-      - "8080:80"
+      - "8080:8080"
     environment:
       - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
-      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
       - MINIO_BUCKET=dnd-books
       # Увеличение лимитов ресурсов для RAG-сервиса
       - KMP_SETTINGS=1

@@ -1,0 +1,100 @@
+# Stage 1: Базовый образ с предустановленными тяжелыми зависимостями
+FROM --platform=linux/amd64 nvidia/cuda:12.6.0-devel-ubuntu22.04 AS base-deps
+
+# Определение аргументов сборки
+ARG TORCH_VERSION=2.7.1
+ARG CUDA_TAG=cu126
+
+# Установка кэшированного источника пакетов для ускорения сборки
+ENV DEBIAN_FRONTEND=noninteractive
+RUN mkdir -p /etc/apt/apt.conf.d && \
+    echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries && \
+    echo 'Acquire::http::Timeout "60";' > /etc/apt/apt.conf.d/80-timeout
+
+# Установка Python и системных зависимостей
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-dev \
+    python3.11-venv \
+    python3-pip \
+    curl \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/* \
+    \
+    && python3.11 -m pip install --upgrade pip setuptools wheel \
+    \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+WORKDIR /app
+
+# Диагностика сети
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN curl -I https://download.pytorch.org/whl/cu126/torch/ || true
+RUN curl -v https://download.pytorch.org/whl/cu126/torch/ -o /tmp/torch_index.html || true
+RUN ls -l /tmp/torch_index.html && tail -n 30 /tmp/torch_index.html
+
+# Диагностика платформы
+RUN uname -m && python3.11 -c "import sys; print(sys.version)"
+
+# Установка PyTorch с подробным логированием
+RUN python3.11 -m pip install -vvv --timeout 300 \
+    --no-cache-dir torch==${TORCH_VERSION}+${CUDA_TAG} \
+    torchvision==0.22.1+${CUDA_TAG} \
+    torchaudio==${TORCH_VERSION}+${CUDA_TAG} \
+    --index-url https://download.pytorch.org/whl/${CUDA_TAG} || true
+
+# Создаем отдельный образ для базовых Python-зависимостей
+FROM base-deps AS core-deps
+
+# Копирование app-зависимостей
+COPY requirements-app.txt .
+
+# Установка остальных зависимостей
+RUN pip install --no-cache-dir --disable-pip-version-check --timeout 600 --retries 40 -r requirements-app.txt
+
+# Основной образ приложения (оптимизированный)
+FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04 AS rag-service
+
+# Установка переменных окружения для CUDA
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+ENV CUDA_VISIBLE_DEVICES=0
+
+# Установка Python
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-venv \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Создание пользователя безопасности
+RUN useradd -m appuser
+
+# Копирование Python-зависимостей из core-deps
+COPY --from=core-deps /usr/local/lib/python3.11 /usr/local/lib/python3.11
+COPY --from=core-deps /usr/local/bin /usr/local/bin
+
+# Установка рабочей директории
+WORKDIR /app/app
+
+# Копирование приложения
+COPY app/ /app/app/
+
+# Копирование конфигурации
+COPY config.yaml /app/config.yaml
+
+# Создание директории для векторного хранилища
+RUN mkdir -p /app/chroma.db
+
+# Смена пользователя на безопасного
+USER appuser
+
+# Экспорт порта
+EXPOSE 80
+
+# Добавление HEALTHCHECK
+HEALTHCHECK CMD curl -f http://localhost:80/health || exit 1
+
+# Запуск приложения с gunicorn для лучшей производительности
+CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "app.main:app"]

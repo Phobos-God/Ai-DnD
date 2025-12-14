@@ -17,9 +17,9 @@ failed to resolve source metadata for docker.io/nvidia/cuda:12.1-devel-ubuntu20.
 - CUDA version mismatch between Dockerfile and available images
 
 **Solution**:
-1. **Pre-download the required CUDA image**:
+1. **Use the correct CUDA image**:
    ```bash
-   docker pull nvidia/cuda:11.8.0-devel-ubuntu20.04
+   docker pull nvidia/cuda:12.6.0-devel-ubuntu22.04
    ```
    
 2. **Verify the image is available**:
@@ -27,30 +27,26 @@ failed to resolve source metadata for docker.io/nvidia/cuda:12.1-devel-ubuntu20.
    docker images | grep nvidia/cuda
    ```
    
-3. **Use the correct image in Dockerfile**:
+3. **Ensure PyTorch dependencies match the CUDA version**:
    ```dockerfile
-   FROM --platform=linux/amd64 nvidia/cuda:11.8.0-devel-ubuntu20.04 as base
-   ```
+   FROM nvidia/cuda:12.6.0-devel-ubuntu22.04 AS base-deps
    
-4. **Ensure PyTorch dependencies match the CUDA version**:
-   ```dockerfile
-   RUN pip install \
-       --no-cache-dir \
-       --timeout 100 \
-       --retries 5 \
-       --default-timeout=100 \
-       torch==2.0.1+cu118 \
-       torchvision==0.15.2+cu118 \
-       torchaudio==2.0.2+cu118 \
-       --extra-index-url https://download.pytorch.org/whl/cu118
+   ARG TORCH_VERSION=2.7.1
+   ARG CUDA_TAG=cu126
+   
+   RUN python3.11 -m pip install --no-cache-dir \
+       torch==${TORCH_VERSION}+${CUDA_TAG} \
+       torchvision==0.22.1+${CUDA_TAG} \
+       torchaudio==${TORCH_VERSION}+${CUDA_TAG} \
+       --index-url https://download.pytorch.org/whl/${CUDA_TAG}
    ```
 
-5. **Verify GPU functionality**:
+4. **Verify GPU functionality**:
    ```bash
-   docker run --rm --gpus all nvidia/cuda:11.8.0-devel-ubuntu20.04 nvidia-smi
+   docker run --rm --gpus all nvidia/cuda:12.6.0-devel-ubuntu22.04 nvidia-smi
    ```
    
-6. **Then proceed with the build**:
+5. **Then proceed with the build**:
    ```bash
    docker-compose -f infrastructure/docker/docker-compose.yml build --no-cache
    ```

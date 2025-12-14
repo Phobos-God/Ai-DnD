@@ -494,6 +494,20 @@ CREATE TABLE sessions (
     xp_earned JSON,
     FOREIGN KEY (party_id) REFERENCES parties(id) ON DELETE CASCADE
 );
+
+-- Создание таблицы dnd_books
+CREATE TABLE dnd_books (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    file_name VARCHAR(255) NOT NULL,
+    file_size BIGINT,
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    version VARCHAR(50),
+    FOREIGN KEY (file_name) REFERENCES maps(filename) ON DELETE CASCADE
+);
+
+-- Создание индекса для быстрой выборки книг по названию
+CREATE INDEX idx_dnd_books_title ON dnd_books(title);
 ```
 
 ## Примечания
