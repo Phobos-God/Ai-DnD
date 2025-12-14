@@ -1,0 +1,65 @@
+# Зависимости для RAG-сервиса Ai-DnD
+# Специальная конфигурация для Windows + Docker
+
+fastapi>=0.104.0
+uvicorn>=0.23.0
+langchain>=0.1.0
+langchain-community>=0.0.22
+langchain-core>=0.1.27
+chromadb>=0.4.22
+PyPDF2>=3.0.0
+sentence-transformers[torch]>=2.2.0
+minio>=7.1.0
+pyyaml>=6.0
+python-multipart>=0.0.6
+
+# Конфигурация pip (эти параметры нужно передавать в командной строке, а не в requirements.txt)
+
+# Допустимые параметры в requirements.txt:
+# - Ссылки на пакеты
+# - Условия установки
+# - Спецификации версий
+
+# Недопустимые параметры (должны быть в командной строке):
+# - --use-deprecated
+# - --no-cache-dir
+# - --timeout
+# - --retries
+# - --disable-pip-version-check
+
+# Допустимые конфигурационные директивы:
+# Основные зависимости
+fastapi>=0.104.0
+uvicorn>=0.23.0
+langchain>=0.1.0
+langchain-community>=0.0.22
+langchain-core>=0.1.27
+chromadb>=0.4.22
+PyPDF2>=3.0.0
+sentence-transformers[torch]>=2.2.0
+minio>=7.1.0
+pyyaml>=6.0
+python-multipart>=0.0.6
+
+# Конфигурация источников пакетов
+--find-links https://download.pytorch.org/whl/torch_stable.html
+--index-url https://pypi.org/simple/
+--extra-index-url https://pypi.org/simple/
+
+# Отдельные зависимости для быстрой установки
+# Установка по группам для ускорения сборки
+
+# Core dependencies (быстрые)
+fastapi>=0.104.0
+uvicorn>=0.23.0
+PyPDF2>=3.0.0
+minio>=7.1.0
+pyyaml>=6.0
+python-multipart>=0.0.6
+
+# Heavy dependencies (тяжелые)
+langchain>=0.1.0
+langchain-community>=0.0.22
+langchain-core>=0.1.27
+chromadb>=0.4.22
+sentence-transformers[torch]>=2.2.0

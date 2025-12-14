@@ -1,0 +1,172 @@
+version: '3.8'
+
+services:
+  # База данных PostgreSQL
+  db:
+    image: postgres:15
+    container_name: ai_dnd_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ai_dnd_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ai_dnd_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_dnd}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./config/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - ai_dnd_network
+    restart: unless-stopped
+
+  # MinIO - объектное хранилище (S3-совместимое)
+  minio:
+    image: minio/minio:latest
+    container_name: ai_dnd_minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"  # API
+      - "9001:9001"  # Консоль
+    command: server /data --console-address ":9001"
+    networks:
+      - ai_dnd_network
+    restart: unless-stopped
+
+  # Ollama - локальный LLM сервер
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ai_dnd_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - ai_dnd_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # n8n - оркестратор workflow
+  n8n:
+    image: n8nio/n8n
+    container_name: ai_dnd_n8n
+    environment:
+      - N8N_HOST=ai-dnd-n8n.local
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - NODE_ENV=production
+      - WEBHOOK_URL=http://localhost:5678/
+      # Отключение регистрации и входа через внешние сервисы для безопасности
+      - N8N_USER_MANAGEMENT_DISABLED=true
+      - GENERIC_TIMEZONE=Europe/Moscow
+    volumes:
+      - n8n_data:/home/node/.n8n
+    ports:
+      - "5678:5678"
+    networks:
+      - ai_dnd_network
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - rag-service
+
+  # Backend (FastAPI)
+  backend:
+    build: 
+      context: ../../backend
+      dockerfile: Dockerfile
+    container_name: ai_dnd_backend
+    command: python main.py
+    volumes:
+      - ../../backend:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-ai_dnd_user}:${POSTGRES_PASSWORD:-ai_dnd_pass}@db:5432/${POSTGRES_DB:-ai_dnd}
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MINIO_SECURE=false
+    networks:
+      - ai_dnd_network
+    restart: unless-stopped
+    depends_on:
+      - db
+      - minio
+      - ollama
+
+  # Frontend (React)
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+    container_name: ai_dnd_frontend
+    ports:
+      - "3000:3000"
+    networks:
+      - ai_dnd_network
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  # RAG Service - Retrieval-Augmented Generation для D&D правил
+  rag-service:
+    build: 
+      context: ../../rag-service
+      dockerfile: Dockerfile
+    container_name: ai_dnd_rag_service
+    ports:
+      - "8080:80"
+    environment:
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - MINIO_BUCKET=dnd-books
+      # Увеличение лимитов ресурсов для RAG-сервиса
+      - KMP_SETTINGS=1
+      - KMP_AFFINITY=granularity=fine,verbose,compact,1,0
+    volumes:
+      - ../../rag-service/chroma.db:/app/chroma.db
+      # Монтирование директории для временных файлов
+      - ../../minio_data/dnd-books:/app/dnd-books:ro
+    networks:
+      - ai_dnd_network
+    restart: unless-stopped
+    depends_on:
+      - minio
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: '4.0'
+        reservations:
+          memory: 4G
+          cpus: '2.0'
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+# Объявление сети
+networks:
+  ai_dnd_network:
+    driver: bridge
+
+# Объявление volumes для постоянного хранения данных
+volumes:
+  db_data:
+  minio_data:
+  ollama_data:
+  n8n_data:
+  rag_chroma_db:
+    # Для хранения векторного индекса ChromaDB
+  rag_temp_data:
+    # Для временных файлов при обработке PDF
