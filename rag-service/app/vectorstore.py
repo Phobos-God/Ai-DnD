@@ -3,10 +3,9 @@ import logging
 from typing import List
 
 import torch
-import chromadb
-from chromadb.config import Settings
+import chromadb  # Импорт chromadb напрямую
 from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings  # Новый пакет
 
 logger = logging.getLogger(__name__)
 
@@ -19,30 +18,24 @@ class VectorStoreManager:
         logger.info(f"Using device: {device}")
         
         self.embedding_function = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={"device": device}
+            model_name="/app/models/paraphrase-multilingual-MiniLM-L12-v2",  # Локальный путь в контейнере, проброшенный через volume
+            model_kwargs={"device": device},
+            encode_kwargs={"normalize_embeddings": True}  # Рекомендуется для модели
         )
-        self.vectorstore = None
-        self._initialize_vectorstore()
-
-    def _initialize_vectorstore(self):
-        """Инициализация Chroma DB с поддержкой сохранения"""
-        chroma_settings = Settings(
-            chroma_db_impl="duckdb+parquet",
-            persist_directory=self.persist_directory,
-            anonymized_telemetry=False
-        )
-
+        logger.info("Embeddings model loaded from local path: /app/models/paraphrase-multilingual-MiniLM-L12-v2")
+        # Новый клиент Chroma (без Settings с duckdb)
         self.client = chromadb.PersistentClient(
-            path=self.persist_directory,
-            settings=chroma_settings
+            path=persist_directory  # Путь к директории
+            # settings=chromadb.config.Settings(anonymized_telemetry=False)  # Опционально, если нужно отключить телеметрию
         )
-
+        
+        # Vectorstore из LangChain
         self.vectorstore = Chroma(
             client=self.client,
-            collection_name=self.collection_name,
+            collection_name=collection_name,
             embedding_function=self.embedding_function
         )
+        
         logger.info(f"Vectorstore initialized at {self.persist_directory}")
 
     def add_documents(self, documents: List[dict]):

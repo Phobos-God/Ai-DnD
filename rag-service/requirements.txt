@@ -12,6 +12,8 @@ sentence-transformers[torch]>=2.2.0
 minio>=7.1.0
 pyyaml>=6.0
 python-multipart>=0.0.6
+transformers>=4.34.0
+sentencepiece>=0.1.99
 
 # Конфигурация pip (эти параметры нужно передавать в командной строке, а не в requirements.txt)
 
@@ -40,6 +42,8 @@ sentence-transformers[torch]>=2.2.0
 minio>=7.1.0
 pyyaml>=6.0
 python-multipart>=0.0.6
+transformers>=4.34.0
+sentencepiece>=0.1.99
 
 # Источники пакетов перенесены в Dockerfile
 # --find-links https://download.pytorch.org/whl/torch_stable.html
@@ -56,6 +60,8 @@ PyPDF2>=3.0.0
 minio>=7.1.0
 pyyaml>=6.0
 python-multipart>=0.0.6
+transformers>=4.34.0
+sentencepiece>=0.1.99
 
 # Heavy dependencies (тяжелые)
 langchain>=0.1.0
@@ -63,3 +69,5 @@ langchain-community>=0.0.22
 langchain-core>=0.1.27
 chromadb>=0.4.22
 sentence-transformers[torch]>=2.2.0
+transformers>=4.34.0
+sentencepiece>=0.1.99

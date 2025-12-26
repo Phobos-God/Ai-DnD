@@ -1,0 +1,2641 @@
+Index: .env
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>MINIO_ROOT_USER=admin\r\nMINIO_ROOT_PASSWORD=password\r\nDATABASE_URL=postgresql://user:password@db:5432/ai_dnd\r\nMINIO_ENDPOINT=minio:9000\r\nMINIO_ACCESS_KEY=admin\r\nMINIO_SECRET_KEY=password\r\nMINIO_BUCKET=ai-dnd-bucket
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.env b/.env
+--- a/.env	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/.env	(date 1766268827296)
+@@ -1,7 +1,15 @@
+-MINIO_ROOT_USER=admin
+-MINIO_ROOT_PASSWORD=password
+-DATABASE_URL=postgresql://user:password@db:5432/ai_dnd
+-MINIO_ENDPOINT=minio:9000
+-MINIO_ACCESS_KEY=admin
+-MINIO_SECRET_KEY=password
+-MINIO_BUCKET=ai-dnd-bucket
+\ No newline at end of file
++# n8n Environment Variables
++N8N_BASIC_AUTH_USER=admin
++N8N_BASIC_AUTH_PASSWORD=verystrongpassword2025!@#
++N8N_ENCRYPTION_KEY=thisisaverysecretkeyfor2025encryption123456789012
++N8N_VERSION=2.0.3
++N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
++
++# MinIO Environment Variables
++MINIO_ROOT_USER=minioadmin
++MINIO_ROOT_PASSWORD=minioadmin
++
++# PostgreSQL Environment Variables
++POSTGRES_USER=ai_dnd_user
++POSTGRES_PASSWORD=ai_dnd_pass
++POSTGRES_DB=ai_dnd
+Index: infrastructure/docker/docker-compose.yml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>version: '3.8'\r\n\r\nservices:\r\n  # База данных PostgreSQL\r\n  db:\r\n    image: postgres:15\r\n    container_name: ai_dnd_db\r\n    environment:\r\n      POSTGRES_USER: ${POSTGRES_USER:-ai_dnd_user}\r\n      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ai_dnd_pass}\r\n      POSTGRES_DB: ${POSTGRES_DB:-ai_dnd}\r\n    volumes:\r\n      - db_data:/var/lib/postgresql/data\r\n      - ./config/init.sql:/docker-entrypoint-initdb.d/init.sql\r\n    ports:\r\n      - \"5432:5432\"\r\n    networks:\r\n      - ai_dnd_network\r\n    restart: unless-stopped\r\n\r\n  # MinIO - объектное хранилище (S3-совместимое)\r\n  minio:\r\n    image: minio/minio:latest\r\n    container_name: ai_dnd_minio\r\n    environment:\r\n      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}\r\n      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}\r\n    volumes:\r\n      - minio_data:/data\r\n    ports:\r\n      - \"9000:9000\"  # API\r\n      - \"9001:9001\"  # Консоль\r\n    command: server /data --console-address \":9001\" --address \":9000\"\r\n    networks:\r\n      - ai_dnd_network\r\n    restart: unless-stopped\r\n\r\n  # Ollama - локальный LLM сервер\r\n  ollama:\r\n    image: ollama/ollama:latest\r\n    container_name: ai_dnd_ollama\r\n    ports:\r\n      - \"11434:11434\"\r\n    volumes:\r\n      - ollama_data:/root/.ollama\r\n    networks:\r\n      - ai_dnd_network\r\n    restart: unless-stopped\r\n    deploy:\r\n      resources:\r\n        reservations:\r\n          devices:\r\n            - driver: nvidia\r\n              count: 1\r\n              capabilities: [gpu]\r\n\r\n  # n8n - оркестратор workflow\r\n  n8n:\r\n    image: n8nio/n8n\r\n    container_name: ai_dnd_n8n\r\n    environment:\r\n      - N8N_HOST=ai-dnd-n8n.local\r\n      - N8N_PORT=5678\r\n      - N8N_PROTOCOL=http\r\n      - NODE_ENV=production\r\n      - WEBHOOK_URL=http://localhost:5678/\r\n      # Отключение регистрации и входа через внешние сервисы для безопасности\r\n      - N8N_USER_MANAGEMENT_DISABLED=true\r\n      - GENERIC_TIMEZONE=Europe/Moscow\r\n    volumes:\r\n      - n8n_data:/home/node/.n8n\r\n    ports:\r\n      - \"5678:5678\"\r\n    networks:\r\n      - ai_dnd_network\r\n    restart: unless-stopped\r\n    depends_on:\r\n      - backend\r\n      - rag-service\r\n\r\n  # Backend (FastAPI)\r\n  backend:\r\n    build: \r\n      context: ../../backend\r\n      dockerfile: Dockerfile\r\n    container_name: ai_dnd_backend\r\n    command: python main.py\r\n    volumes:\r\n      - ../../backend:/app\r\n    ports:\r\n      - \"8000:8000\"\r\n    environment:\r\n      - DATABASE_URL=postgresql://${POSTGRES_USER:-ai_dnd_user}:${POSTGRES_PASSWORD:-ai_dnd_pass}@db:5432/${POSTGRES_DB:-ai_dnd}\r\n      - MINIO_ENDPOINT=minio:9000\r\n      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}\r\n      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}\r\n      - MINIO_SECURE=false\r\n    networks:\r\n      - ai_dnd_network\r\n    restart: unless-stopped\r\n    depends_on:\r\n      - db\r\n      - minio\r\n      - ollama\r\n\r\n  # Frontend (React)\r\n  frontend:\r\n    build:\r\n      context: ../../frontend\r\n      dockerfile: Dockerfile\r\n    container_name: ai_dnd_frontend\r\n    ports:\r\n      - \"3000:3000\"\r\n    networks:\r\n      - ai_dnd_network\r\n    restart: unless-stopped\r\n    depends_on:\r\n      - backend\r\n\r\n  # RAG Service - Retrieval-Augmented Generation для D&D правил\r\n  rag-service:\r\n    build: \r\n      context: ../../rag-service\r\n      dockerfile: Dockerfile.prod\r\n    container_name: ai_dnd_rag_service\r\n    ports:\r\n      - \"8080:8080\"\r\n    environment:\r\n      - MINIO_ENDPOINT=minio:9000\r\n      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}\r\n      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}\r\n      - MINIO_BUCKET=dnd-books\r\n      # Увеличение лимитов ресурсов для RAG-сервиса\r\n      - KMP_SETTINGS=1\r\n      - KMP_AFFINITY=granularity=fine,verbose,compact,1,0\r\n    volumes:\r\n      - ../../rag-service/chroma.db:/app/chroma.db\r\n      # Монтирование директории для временных файлов\r\n      - ../../minio_data/dnd-books:/app/dnd-books:ro\r\n    networks:\r\n      - ai_dnd_network\r\n    restart: unless-stopped\r\n    depends_on:\r\n      - minio\r\n    deploy:\r\n      resources:\r\n        limits:\r\n          memory: 8G\r\n          cpus: '4.0'\r\n        reservations:\r\n          memory: 4G\r\n          cpus: '2.0'\r\n          devices:\r\n            - driver: nvidia\r\n              count: 1\r\n              capabilities: [gpu]\r\n\r\n# Объявление сети\r\nnetworks:\r\n  ai_dnd_network:\r\n    driver: bridge\r\n\r\n# Объявление volumes для постоянного хранения данных\r\nvolumes:\r\n  db_data:\r\n  minio_data:\r\n  ollama_data:\r\n  n8n_data:\r\n  rag_chroma_db:\r\n    # Для хранения векторного индекса ChromaDB\r\n  rag_temp_data:\r\n    # Для временных файлов при обработке PDF
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/infrastructure/docker/docker-compose.yml b/infrastructure/docker/docker-compose.yml
+--- a/infrastructure/docker/docker-compose.yml	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/infrastructure/docker/docker-compose.yml	(date 1766286804271)
+@@ -34,6 +34,11 @@
+     networks:
+       - ai_dnd_network
+     restart: unless-stopped
++    healthcheck:  # Новый healthcheck
++      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
++      interval: 30s
++      timeout: 20s
++      retries: 3
+ 
+   # Ollama - локальный LLM сервер
+   ollama:
+@@ -54,18 +59,39 @@
+               count: 1
+               capabilities: [gpu]
+ 
++  # Redis - для очереди выполнения n8n
++  redis:
++    image: redis:7-alpine
++    container_name: ai_dnd_redis
++    ports:
++      - "6379:6379"
++    volumes:
++      - redis_data:/data
++    restart: unless-stopped
++    networks:
++      - ai_dnd_network
++    command: redis-server --save 60 1 --loglevel warning
++
+   # n8n - оркестратор workflow
+   n8n:
+-    image: n8nio/n8n
++    image: n8nio/n8n:2.0.3
+     container_name: ai_dnd_n8n
+     environment:
+-      - N8N_HOST=ai-dnd-n8n.local
++      - N8N_VERSION=2.0.3
++      - N8N_HOST=localhost
+       - N8N_PORT=5678
+       - N8N_PROTOCOL=http
+       - NODE_ENV=production
+       - WEBHOOK_URL=http://localhost:5678/
+-      # Отключение регистрации и входа через внешние сервисы для безопасности
+-      - N8N_USER_MANAGEMENT_DISABLED=true
++      - N8N_USER_MANAGEMENT_DISABLED=false
++      - N8N_BASIC_AUTH_ACTIVE=true
++      - N8N_BASIC_AUTH_USER=admin
++      - N8N_BASIC_AUTH_PASSWORD=verystrongpassword2025!@#
++      - N8N_ENCRYPTION_KEY=thisisaverysecretkeyfor2025encryption123456789012
++      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
++      - EXECUTIONS_MODE=queue
++      - QUEUE_BULL_REDIS_HOST=redis
++      - QUEUE_BULL_REDIS_PORT=6379
+       - GENERIC_TIMEZONE=Europe/Moscow
+     volumes:
+       - n8n_data:/home/node/.n8n
+@@ -77,6 +103,7 @@
+     depends_on:
+       - backend
+       - rag-service
++      - redis
+ 
+   # Backend (FastAPI)
+   backend:
+@@ -137,11 +164,15 @@
+       - ../../rag-service/chroma.db:/app/chroma.db
+       # Монтирование директории для временных файлов
+       - ../../minio_data/dnd-books:/app/dnd-books:ro
++      - ../../rag-service/chroma.db:/app/chroma.db
++      - ../../minio_data/dnd-books:/app/dnd-books:ro
++      - E:/Ai-DnD/models:/app/models:ro  # Монтируем всю папку models в контейнер
+     networks:
+       - ai_dnd_network
+     restart: unless-stopped
+-    depends_on:
+-      - minio
++    depends_on:  # Изменённый depends_on
++      minio:
++        condition: service_healthy  # Ждёт healthcheck MinIO
+     deploy:
+       resources:
+         limits:
+@@ -169,4 +200,5 @@
+   rag_chroma_db:
+     # Для хранения векторного индекса ChromaDB
+   rag_temp_data:
+-    # Для временных файлов при обработке PDF
+\ No newline at end of file
++    # Для временных файлов при обработке PDF
++  redis_data:
+\ No newline at end of file
+Index: backend/src/database/__init__.py
+===================================================================
+diff --git a/backend/src/database/__init__.py b/backend/src/database/__init__.py
+deleted file mode 100644
+--- a/backend/src/database/__init__.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ /dev/null	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
+@@ -1,5 +0,0 @@
+-from .database import engine, Base, SessionLocal, get_db
+-
+-# Database setup is now handled in main.py
+-# The engine is created with DATABASE_URL from environment variables
+-# All models inherit from Base and will be created in the database on startup
+Index: backend/src/database/database.py
+===================================================================
+diff --git a/backend/src/database/database.py b/backend/src/database/database.py
+deleted file mode 100644
+--- a/backend/src/database/database.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ /dev/null	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
+@@ -1,23 +0,0 @@
+-from sqlalchemy import create_engine
+-from sqlalchemy.ext.declarative import declarative_base
+-from sqlalchemy.orm import sessionmaker
+-import os
+-
+-# Настройки базы данных
+-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@db:5432/ai_dnd")
+-
+-# Создание engine для подключения к базе данных
+-engine = create_engine(DATABASE_URL)
+-
+-# Создание сессии
+-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+-
+-# Базовый класс для моделей
+-Base = declarative_base()
+-
+-def get_db():
+-    db = SessionLocal()
+-    try:
+-        yield db
+-    finally:
+-        db.close()
+Index: backend/src/security.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from datetime import datetime, timedelta\r\nfrom typing import Optional\r\n\r\nimport jwt\r\nfrom fastapi import Depends, HTTPException, status\r\nfrom fastapi.security import OAuth2PasswordBearer\r\nfrom passlib.context import CryptContext\r\n\r\n# Настройки для JWT\r\nSECRET_KEY = \"your-secret-key-change-in-production\"\r\nALGORITHM = \"HS256\"\r\nACCESS_TOKEN_EXPIRE_MINUTES = 30\r\n\r\npwd_context = CryptContext(schemes=[\"bcrypt\"], deprecated=\"auto\")\r\noauth2_scheme = OAuth2PasswordBearer(tokenUrl=\"/api/auth/login\")\r\n\r\ndef verify_password(plain_password, hashed_password):\r\n    return pwd_context.verify(plain_password, hashed_password)\r\n\r\ndef get_password_hash(password):\r\n    return pwd_context.hash(password)\r\n\r\ndef create_access_token(data: dict, expires_delta: Optional[timedelta] = None):\r\n    to_encode = data.copy()\r\n    if expires_delta:\r\n        expire = datetime.utcnow() + expires_delta\r\n    else:\r\n        expire = datetime.utcnow() + timedelta(minutes=15)\r\n    to_encode.update({\"exp\": expire})\r\n    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)\r\n    return encoded_jwt\r\n\r\ndef decode_access_token(token: str):\r\n    try:\r\n        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])\r\n        return payload\r\n    except jwt.JWTError:\r\n        return None
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/security.py b/backend/src/security.py
+--- a/backend/src/security.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/security.py	(date 1765812604776)
+@@ -1,38 +1,30 @@
+-from datetime import datetime, timedelta
++from datetime import datetime, timedelta, timezone
+ from typing import Optional
+-
+-import jwt
+-from fastapi import Depends, HTTPException, status
+-from fastapi.security import OAuth2PasswordBearer
++import os
++from jose import JWTError, jwt
+ from passlib.context import CryptContext
+ 
+-# Настройки для JWT
+-SECRET_KEY = "your-secret-key-change-in-production"
++# Контекст для хеширования паролей
++pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
++
++# Секретный ключ и алгоритм для JWT (лучше получать из env)
++SECRET_KEY = os.getenv("SECRET_KEY", "your-super-secret-key-change-it-in-production") # Обязательно смените в продакшене!
+ ALGORITHM = "HS256"
+ ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ 
+-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+ 
+-def verify_password(plain_password, hashed_password):
++def verify_password(plain_password: str, hashed_password: str) -> bool:
++    """Проверяет, совпадает ли plain_password с hashed_password."""
+     return pwd_context.verify(plain_password, hashed_password)
+ 
+-def get_password_hash(password):
++def get_password_hash(password: str) -> str:
++    """Возвращает хеш для заданного пароля."""
+     return pwd_context.hash(password)
+ 
+ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
++    """Создает JWT токен."""
+     to_encode = data.copy()
+-    if expires_delta:
+-        expire = datetime.utcnow() + expires_delta
+-    else:
+-        expire = datetime.utcnow() + timedelta(minutes=15)
++    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+     to_encode.update({"exp": expire})
+     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+     return encoded_jwt
+-
+-def decode_access_token(token: str):
+-    try:
+-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+-        return payload
+-    except jwt.JWTError:
+-        return None
+\ No newline at end of file
+Index: docs/n8n_workflow_setup.md
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/docs/n8n_workflow_setup.md b/docs/n8n_workflow_setup.md
+new file mode 100644
+--- /dev/null	(date 1766318142288)
++++ b/docs/n8n_workflow_setup.md	(date 1766318142288)
+@@ -0,0 +1,415 @@
++# 🛠️ Подробная инструкция по настройке workflow в n8n для Ai-DnD
++
++Этот документ содержит максимально подробное описание конфигурации workflow в n8n для корректной работы системы Ai-DnD. Данный workflow отвечает за обработку действий игроков и генерацию ответов ИИ-ведущего с использованием RAG-сервиса и LLM.
++
++## 🎯 Назначение workflow
++
++Workflow предназначен для обработки игровых действий игроков и генерации контекстуально точных ответов ИИ-ведущего. Он интегрирует несколько сервисов:
++
++- **Backend (FastAPI)**: для получения контекста игры
++- **RAG-сервис**: для извлечения релевантных правил D&D 5e
++- **Ollama**: для генерации текста с помощью LLM
++- **Backend (FastAPI)**: для сохранения и передачи ответа игрокам
++
++## 🗺️ Общая схема workflow
++
++```plaintext
+++----------------+     +---------------------+     +---------------------+
++|                |     |                     |     |                     |
++|   Webhook      |---->|  Получение контекста |---->|  Запрос к RAG-сервису |
++|   (Действие    |     |  игры (история,     |     |  (правила D&D)       |
++|   игрока)      |     |  персонажи)         |     |                     |
++|                |     |                     |     |                     |
+++----------------+     +---------------------+     +---------------------+
++                                                                      |
++                                                                      v
+++---------------------+     +---------------------+     +---------------------+
++|                     |     |                     |     |                     |
++|  Формирование       |<----|  Объединение        |<----|  Обработка          |
++|  промпта            |     |  контекста          |     |  ответа RAG-сервиса |
++|                     |     |                     |     |                     |
+++---------------------+     +---------------------+     +---------------------+
++                                                                      |
++                                                                      v
+++---------------------+     +---------------------+     +---------------------+
++|                     |     |                     |     |                     |
++|  Вызов Ollama       |---->|  Обработка          |---->|  Отправка ответа    |
++|  (генерация ответа) |     |  ответа LLM         |     |  в Backend          |
++|                     |     |                     |     |                     |
+++---------------------+     +---------------------+     +---------------------+
++```
++
++## 🧩 Пошаговая настройка узлов (nodes)
++
++### 1. Webhook Node: Прием действия игрока
++
++**Тип узла**: Webhook
++
++**Настройки**:
++- **Name**: `Webhook: Player Action`
++- **HTTP Method**: `POST`
++- **Path**: `/workflow/player-action`
++- **Response Code**: `200`
++- **Response Mode**: `Last Node`
++- **Response Data**: `Response`
++
++**Описание**:
++Этот узел служит точкой входа для действий игроков. Backend (FastAPI) отправляет сюда POST-запрос при каждом действии игрока в чате.
++
++**Ожидаемый входной JSON**:
++```json
++{
++  "action": "Игрок исследует комнату",
++  "player_id": "123",
++  "session_id": "abc",
++  "character_name": "Гром Молотов"
++}
++```
++
++**Совет**: Убедитесь, что узел настроен на ожидание JSON-данных и правильно обрабатывает CORS, если frontend и n8n находятся на разных доменах.
++
++### 2. HTTP Request Node: Получение истории партии
++
++**Тип узла**: HTTP Request
++
++**Настройки**:
++- **Name**: `GET Session History`
++- **Request Method**: `GET`
++- **URL**: `http://backend:8000/api/story_log?limit=30`
++- **Response Format**: `JSON`
++
++**Описание**:
++Этот узел запрашивает у backend'а полную историю игровой сессии, включая все предыдущие действия игроков и ответы ведущего.
++
++**Используемые переменные**:
++- `{{ $json["session_id"] }}` — ID игровой сессии из входного вебхука
++
++**Ожидаемый ответ от backend**:
++```json
++[
++  {
++    "type": "player",
++    "content": "Привет, я вхожу в пещеру",
++    "timestamp": "2025-12-21T10:00:00Z"
++  },
++  {
++    "type": "dm",
++    "content": "Вы входите в темную пещеру с капающей водой со свода",
++    "timestamp": "2025-12-21T10:01:00Z"
++  }
++]
++```
++
++### 3. HTTP Request Node: Получение состояния персонажей
++
++**Тип узла**: HTTP Request
++
++**Настройки**:
++- **Name**: `GET Character State`
++- **Request Method**: `GET`
++- **URL**: `http://backend:8000/api/characters`
++- **Response Format**: `JSON`
++
++**Описание**:
++Этот узел получает текущее состояние всех персонажей в сессии, включая их характеристики, инвентарь, здоровье и уровень.
++
++**Ожидаемый ответ от backend**:
++```json
++[
++  {
++    "name": "Гром Молотов",
++    "class": "Воин",
++    "level": 3,
++    "hp": 25,
++    "max_hp": 25,
++    "inventory": ["Меч", "Щит"],
++    "abilities": {"Сила": 16, "Ловкость": 12}
++  }
++]
++```
++
++### 4. HTTP Request Node: Запрос к RAG-сервису
++
++**Тип узла**: HTTP Request
++
++**Настройки**:
++- **Name**: `RAG: Retrieve Rules`
++- **Request Method**: `GET`
++- **URL**: `http://rag-service:8080/retrieve?query={{ $json["action"] }}`
++- **Response Format**: `JSON`
++- **Timeout**: `30000` (30 секунд)
++
++**Описание**:
++Этот узел отправляет текст действия игрока в RAG-сервис для поиска релевантных правил D&D 5e. RAG-сервис возвращает до 3 наиболее релевантных фрагментов из PDF-книг (PHB, DMG, SRD).
++
++**Используемые переменные**:
++- `{{ $json["action"] }}` — текст действия игрока из вебхука
++
++**Ожидаемый ответ от RAG-сервиса**:
++```json
++{
++  "query": "исследует комнату",
++  "results": [
++    {
++      "content": "При исследовании помещения персонажи могут сделать проверку Мудрости (Внимание) чтобы заметить скрытые детали...",
++      "metadata": {
++        "source": "phb.pdf",
++        "page": 178
++      },
++      "score": 0.85
++    }
++  ]
++}
++```
++
++### 5. Function Node: Объединение контекста
++
++**Тип узла**: Function
++
++**Настройки**:
++- **Name**: `Combine Context`
++- **JavaScript Code**:
++
++```javascript
++// Получаем данные из предыдущих узлов
++const storyLog = $input.all()[1].json; // История из story_log
++const characters = $input.all()[2].json; // Состояние персонажей
++const ragResults = $input.all()[3].json; // Результаты RAG
++const playerAction = $json.action; // Действие игрока
++const characterName = $json.character_name; // Имя персонажа
++
++// Формируем контекст
++const context = {
++  history: storyLog.map(item => `[${item.timestamp}] ${item.character_id ? 'Player' : 'DM'}: ${item.content}`).join('\n'),
++  characters: characters,
++  rag_rules: ragResults.results.map(r => `Источник: ${r.metadata.source}, стр. ${r.metadata.page}\n${r.content}`).join('\n\n'),
++  current_action: playerAction,
++  current_character: characterName
++};
++
++return [context];
++```
++
++**Описание**:
++Этот узел объединяет все полученные данные в единый контекстный объект, который будет использован для формирования промпта. Узел обрабатывает выходные данные всех предыдущих HTTP-запросов и структурирует их для последующего использования.
++
++### 6. Function Node: Формирование промпта
++
++**Тип узла**: Function
++
++**Настройки**:
++- **Name**: `Format LLM Prompt`
++- **JavaScript Code**:
++
++```javascript
++// Получаем объединенный контекст
++const context = $input.all()[0].json;
++
++// Системный промпт для ИИ-ведущего
++const systemPrompt = `Ты — опытный ведущий (Dungeon Master) для Dungeons & Dragons 5e. Твоя задача — управлять игровой сессией, описывать мир, контролировать монстров и NPC, а также точно следовать правилам игры.
++
++## Требования:
++1. Отвечай от лица ведущего в повествовательной форме
++2. Используй правила из RAG-сервиса при необходимости
++3. Сохраняй игровой баланс и логику мира
++4. Будь креативным, но последовательным
++5. Учитывай состояние персонажей и историю сессии
++
++## Контекст игры:
++- Текущее действие: ${context.current_action}
++- Персонаж, совершающий действие: ${context.current_character}
++
++## История сессии:
++${context.history}
++
++## Состояние персонажей:
++${context.characters.map(c => `- ${c.name} (${c.class} ${c.level}): ${c.hp}/${c.max_hp} HP, Инвентарь: ${c.inventory.join(', ')}`).join('\n')}
++
++## Релевантные правила из D&D 5e:
++${context.rag_rules}
++
++## Инструкция:
++На основе всего вышеперечисленного сгенерируй ответ на действие игрока. Опиши, что происходит в мире, какие проверки нужно сделать (если необходимо), и какие последствия может иметь это действие.`;
++
++// Формируем финальный промпт
++const finalPrompt = {
++  model: "qwen3:4b-instruct", // актуальная легковесная модель
++  prompt: systemPrompt,
++  stream: false,
++  temperature: 0.7,
++  max_tokens: 512
++};
++
++return [finalPrompt];
++```
++
++**Описание**:
++Этот узел формирует финальный промпт для LLM, объединяя системные инструкции, контекст игры, историю сессии, состояние персонажей и релевантные правила из RAG-сервиса. Промпт спроектирован так, чтобы ИИ-ведущий генерировал точные, контекстуально релевантные и соответствующие правилам ответы.
++
++### 7. HTTP Request Node: Вызов Ollama (LLM)
++
++**Тип узла**: HTTP Request
++
++**Настройки**:
++- **Name**: `LLM: Generate Response`
++- **Request Method**: `POST`
++- **URL**: `http://ollama:11434/api/generate`
++- **Content-Type**: `Application JSON`
++- **Body**: `{{ $json | json }}` (автоматически подставляет выход из Function Node)
++- **Response Format**: `JSON`
++- **Timeout**: `60000` (60 секунд)
++
++**Описание**:
++Этот узел отправляет сформированный промпт в Ollama для генерации текста с помощью LLM. Ollama возвращает сгенерированный ответ в виде потока токенов или полного сообщения.
++
++**Ожидаемый запрос к Ollama**:
++```json
++{
++  "model": "qwen3:4b-instruct",
++  "prompt": "Ты — опытный ведущий...",
++  "stream": false,
++  "temperature": 0.7,
++  "max_tokens": 512
++}
++```
++
++**Ожидаемый ответ от Ollama**:
++```json
++{
++  "model": "qwen3:4b-instruct",
++  "response": "Гром Молотов, вы осторожно входите в темную комнату. Стены покрыты влажным мхом, а на полу видны следы...",
++  "done": true
++}
++```
++
++### 8. Function Node: Обработка ответа LLM
++
++**Тип узла**: Function
++
++**Настройки**:
++- **Name**: `Process LLM Response`
++- **JavaScript Code**:
++
++```javascript
++// Получаем ответ от LLM
++const llmResponse = $input.all()[0].json;
++
++// Извлекаем текст ответа
++const responseText = llmResponse.response.trim();
++
++// Формируем объект для отправки в backend
++const dmResponse = {
++  "type": "dm",
++  "content": responseText,
++  "timestamp": new Date().toISOString(),
++  "source": "ai_dm",
++  "metadata": {
++    "model": llmResponse.model,
++    "tokens": llmResponse.eval_count || 0
++  }
++};
++
++return [dmResponse];
++```
++
++**Описание**:
++Этот узел обрабатывает сырой ответ от LLM, извлекает текст и форматирует его в структуру, ожидаемую backend'ом для сохранения в истории сессии.
++
++### 9. HTTP Request Node: Отправка ответа в Backend
++
++**Тип узла**: HTTP Request
++
++**Настройки**:
++- **Name**: `POST DM Response`
++- **Request Method**: `POST`
++- **URL**: `http://backend:8000/api/story_log`
++- **Content-Type**: `Application JSON`
++- **Body**: `{{ $json | json }}` (автоматически подставляет обработанный ответ)
++- **Response Format**: `JSON`
++
++**Описание**:
++Этот узел отправляет сгенерированный ответ ИИ-ведущего обратно в backend, где он сохраняется в истории сессии и транслируется всем игрокам через WebSocket.
++
++**Ожидаемый запрос к backend**:
++```json
++{
++  "type": "dm",
++  "content": "Гром Молотов, вы осторожно входите в темную комнату...",
++  "timestamp": "2025-12-21T10:02:00Z",
++  "source": "ai_dm",
++  "metadata": {
++    "model": "qwen3:4b-instruct",
++    "tokens": 156
++  }
++}
++```
++
++## ⚙️ Дополнительные настройки workflow
++
++### Ошибки и обработка исключений
++
++Рекомендуется добавить обработку ошибок:
++
++1. **Error Trigger Node**: для перехвата ошибок в workflow
++2. **Function Node**: для формирования сообщения об ошибке
++3. **HTTP Request Node**: для отправки уведомления об ошибке в backend
++
++### Логирование
++
++- Добавьте **Debug Node** после каждого ключевого узла для отладки
++- Используйте **Set Node** для сохранения промежуточных данных в переменные workflow
++
++### Переменные окружения
++
++Рекомендуется использовать переменные окружения для:
++- URL сервисов (`BACKEND_URL`, `RAG_SERVICE_URL`, `OLLAMA_URL`)
++- Таймаутов
++- Параметров LLM (температура, max_tokens)
++
++## 🔐 Безопасность
++
++1. **Аутентификация**: Убедитесь, что n8n защищен паролем или API-ключом
++2. **Валидация входных данных**: Добавьте проверку входного JSON на наличие обязательных полей
++3. **Ограничение скорости**: Настройте rate limiting для вебхука
++4. **Шифрование**: Убедитесь, что все HTTP-запросы между сервисами происходят по внутренней Docker-сети
++
++## 🧪 Тестирование workflow
++
++1. Отправьте тестовый POST-запрос на вебхук:
++```bash
++curl -X POST http://localhost:5678/workflow/player-action \
++  -H "Content-Type: application/json" \
++  -d '{"action": "Исследую комнату", "session_id": "test123", "character_name": "Тестовый Персонаж"}'
++```
++
++2. Проверьте логи n8n на предмет ошибок
++3. Убедитесь, что ответ появился в интерфейсе игры
++
++## 🔄 Обновление и поддержка
++
++### Обновление модели LLM
++
++1. Загрузите новую модель в Ollama:
++```bash
++docker exec -it ai_dnd_ollama ollama pull новая_модель
++```
++2. Обновите параметр `model` в Function Node `Format LLM Prompt`
++
++### Добавление новых функций
++
++Рекомендуемые улучшения:
++- Добавление узла для автоматического броска кубиков
++- Интеграция с TTS для озвучивания ответов
++- Добавление узла для генерации изображений карт
++- Реализация workflow для автоматического начисления опыта
++
++## 📌 Заключение
++
++Данный workflow является центральным элементом системы Ai-DnD, обеспечивающим интеграцию всех компонентов и превращающим LLM в компетентного ведущего по D&D. Корректная настройка этого workflow критически важна для:
++
++- Точного следования правилам D&D 5e через RAG
++- Контекстуальной согласованности игровой сессии
++- Качества генерируемых ответов
++- Общей стабильности системы
++
++После настройки workflow протестируйте его с различными действиями игроков и убедитесь в корректной работе всех интеграций.
+\ No newline at end of file
+Index: docs/n8n_workflow.json
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/docs/n8n_workflow.json b/docs/n8n_workflow.json
+new file mode 100644
+--- /dev/null	(date 1766318314040)
++++ b/docs/n8n_workflow.json	(date 1766318314040)
+@@ -0,0 +1,97 @@
++{
++ "name": "Действие игрока → Ответ ИИ в личных сообщениях",
++ "узлы": [
++ {
++ "параметры": {
++ "httpMethod": "POST",
++ "путь": "9454499c-1121-471a-a76c-38f1f3026ed2",
++ "опции": {
++ "rawBody": "={\n \"status\": \"received\",\n \"message\": \"Действие принято к обработке\"\n}",
++ "responseData": "JSON",
++ "responseHeaders": {
++ "entries": [
++ {
++ "name": "Content-Type",
++ "value": "application/json"
++ }
++ ]
++ }
++ },
++ "type": "n8n-nodes-base.webhook",
++ "typeVersion": 2.1,
++ "position": [
++ 96,
++ -64
++ ],
++ "id": "17d36202-0c8d-4e54-b119-9a831d1cba1b",
++ "name": "Webhook",
++ "webhookId": "9454499c-1121-471a-a76c-38f1f3026ed2"
++ },
++ {
++ "параметры": {
++ "url": "http://backend:8000/api/story_log?limit=30",
++ "опции": {
++ "ответ": {
++ "ответ": {
++ "формат ответа": "json"
++ }
++ }
++ }
++ },
++ "type": "n8n-nodes-base.httpRequest",
++ "typeVersion": 4.3,
++ "position": [
++ 288,
++ -256
++ ],
++ "id": "6e800c2a-9693-466c-a623-e59b4509b015",
++ "name": "HTTP-запрос",
++ "alwaysOutputData": false
++ },
++ {
++ "parameters": {
++ "url": "http://rag-service:8080/retrieve",
++ "sendQuery": true,
++ "queryParameters": {
++ "parameters": [
++ {
++ "name": "query",
++ "value": "{{$json[\"action\"]}}"
++ },
++ {
++ "name": "top_k",
++ "value": "2"
++ }
++ ]
++ },
++ "options": {
++ "response": {
++ "response": {
++ "responseFormat": "json"
++ }
++ }
++ }
++ },
++ "type": "n8n-nodes-base.httpRequest",
++ "typeVersion": 4.3,
++ "position": [
++ 304,
++ 144
++ ],
++ "id": "00564369-6a76-4e23-9029-0c5416df073a",
++ "name": "HTTP-запрос 1"
++ },
++ {
++ "параметры": {},
++ "тип": "n8n-nodes-base.merge",
++ "версия типа": 3.2,
++ "позиция": [
++ 544,
++ -96
++ ],
++ "id": "b021749c-778e-46b8-8d22-05c1967524e4",
++ "name": "Слияние"
++ },
++ {
++ "parameters": {
++ "jsCode": "/ ** \n * Полный, надежный функциональный узел для n8n \n * - Считывает карту ролей из элементов [0].json.roles или статических данных рабочего процесса \n * - Извлекает текст проигрывателя из множества возможных полей webhook (надежный) \n * - Нормализует и сопоставляет триггеры с логикой, дружественной к подстроке / stem (работает для русского языка) \n * - Учитывает session_state и явные переопределения ролей \n * - Объединяет параметры ролей (системный текст, температура, max_tokens, stop_sequences, useChat) \n * - Необязательно генерирует небольшое совпадение (настраиваемая вероятность) \n * - Создает конечную полезную нагрузку для Ollama: либо {приглашение, метаданные, ollama }, либо {система, пользователь, метаданные, ollama } \n * - Возвращает отладочную информацию, помогающую отслеживать выбор и соответствие \n * \n * Использование: \n * - Поместите ваши полные роли в формате JSON в Set node (Mode: JSON) в качестве ключа верхнего уровня \"роли\" \n * - Подключите Set -> Function -> Ollama \n * - Убедитесь, что Ollama node считывает параметры из возвращенных json. Пример: {{$json[\"ollama\"].temperature}}\n *\n * Вывод:\n * - itemsOut[0].json содержит:\n * - debug: подробное внутреннее состояние \n * - приглашение ИЛИ system+ user \n * - метаданные: роль, matched_triggers, достоверность, reason_for_selection, оценки \n * - ollama: модель, base_url, температура, max_tokens, stop_sequences \n */\n\nconst itemsOut = [];\n\nфункция safeParseRoles(maybe) {\n if (!maybe) возвращает null;\n if (typeof maybe === 'object') возвращает maybe;\n if (typeof maybe === 'string') {\n try { return JSON.parse(maybe); } catch (e) { return null; }\n }\n return null;\n}\n\nфункция extractText(field) {\n if (!field) return \"\" ;\n if (поле typeof === \"строка\") return field;\n if (Array.isArray(field)) return field.map(x => (typeof x === \"строка\" ? x : JSON.stringify(x))).join(\"\\n\");\n try { return JSON.stringify(field); } catch (e) { return \"\"; }\n}\n\nфункция normalizeText(s) {\n if (!s) return \"\";\n // В нижнем регистре сохранить буквы / цифры / пробелы, свернуть пробелы \n вернуть s.toLowerCase().replace(/[^\\p{L} \\p{N}\\s]/gu, \" \\
+\ No newline at end of file
+Index: rag-service/debug/check_requirements.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/rag-service/debug/check_requirements.py b/rag-service/debug/check_requirements.py
+new file mode 100644
+--- /dev/null	(date 1765816012376)
++++ b/rag-service/debug/check_requirements.py	(date 1765816012376)
+@@ -0,0 +1,25 @@
++import subprocess
++import sys
++import os
++
++def install_and_import(package):
++    try:
++        __import__(package)
++    except ImportError:
++        print(f"Installing {package}...")
++        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
++        print(f"{package} installed successfully")
++        # После установки добавляем путь к site-packages в sys.path
++        site_packages = os.path.join(os.path.dirname(sys.executable), 'lib', 'site-packages')
++        if site_packages not in sys.path:
++            sys.path.insert(0, site_packages)
++        globals()[package] = __import__(package)
++
++# Проверяем и устанавливаем необходимые пакеты
++required_packages = ['fastapi', 'uvicorn', 'pyyaml', 'minio', 'chromadb', 'pymupdf']
++
++for package in required_packages:
++    install_and_import(package)
++    print(f"✓ {package} is available")
++
++print("\nAll required packages are available!")
+\ No newline at end of file
+Index: rag-service/debug/check_module_path.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/rag-service/debug/check_module_path.py b/rag-service/debug/check_module_path.py
+new file mode 100644
+--- /dev/null	(date 1765815973561)
++++ b/rag-service/debug/check_module_path.py	(date 1765815973561)
+@@ -0,0 +1,23 @@
++import sys
++import os
++
++# Добавляем родительскую директорию в sys.path
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++print("Updated Python path:")
++for p in sys.path:
++    print(p)
++
++try:
++    import app
++    print("\nSuccessfully imported app")
++    print(f"app location: {app.__file__}")
++except ImportError as e:
++    print(f"\nImportError: {e}")
++
++try:
++    from app import main
++    print("\nSuccessfully imported main from app")
++    print(f"main location: {main.__file__}")
++except ImportError as e:
++    print(f"\nImportError when importing main: {e}")
+\ No newline at end of file
+Index: backend/src/schemas/character.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from __future__ import annotations\r\n\r\nfrom pydantic import BaseModel\r\nfrom typing import List, Optional\r\nfrom datetime import datetime\r\n\r\n\r\nclass CharacterBase(BaseModel):\r\n    name: str\r\n    race: str\r\n    character_class: str\r\n    level: int = 1\r\n    health_points: int = 10\r\n    max_health_points: int = 10\r\n    experience: int = 0\r\n    strength: int = 10\r\n    dexterity: int = 10\r\n    constitution: int = 10\r\n    intelligence: int = 10\r\n    wisdom: int = 10\r\n    charisma: int = 10\r\n    gold: int = 0\r\n    description: Optional[str] = None\r\n    image_url: Optional[str] = None\r\n\r\n\r\nclass CharacterCreate(CharacterBase):\r\n    pass\r\n\r\n\r\nclass Character(CharacterBase):\r\n    id: int\r\n    owner_id: int\r\n    created_at: datetime\r\n    updated_at: datetime\r\n\r\n    class Config:\r\n        from_attributes = True
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/schemas/character.py b/backend/src/schemas/character.py
+--- a/backend/src/schemas/character.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/schemas/character.py	(date 1765812636127)
+@@ -1,10 +1,8 @@
+-from __future__ import annotations
+-
+ from pydantic import BaseModel
+-from typing import List, Optional
++from typing import Optional
+ from datetime import datetime
+ 
+-
++# Shared properties
+ class CharacterBase(BaseModel):
+     name: str
+     race: str
+@@ -22,17 +20,41 @@
+     gold: int = 0
+     description: Optional[str] = None
+     image_url: Optional[str] = None
++    owner_id: int
+ 
+-
++# Properties to receive via API on creation
+ class CharacterCreate(CharacterBase):
+     pass
+ 
++# Properties to receive via API on update
++class CharacterUpdate(BaseModel):
++    name: Optional[str] = None
++    race: Optional[str] = None
++    character_class: Optional[str] = None
++    level: Optional[int] = None
++    health_points: Optional[int] = None
++    max_health_points: Optional[int] = None
++    experience: Optional[int] = None
++    strength: Optional[int] = None
++    dexterity: Optional[int] = None
++    constitution: Optional[int] = None
++    intelligence: Optional[int] = None
++    wisdom: Optional[int] = None
++    charisma: Optional[int] = None
++    gold: Optional[int] = None
++    description: Optional[str] = None
++    image_url: Optional[str] = None
++    owner_id: Optional[int] = None
+ 
+-class Character(CharacterBase):
++# Additional properties stored in DB
++class CharacterInDB(CharacterBase):
+     id: int
+-    owner_id: int
+     created_at: datetime
+     updated_at: datetime
+ 
+     class Config:
+-        from_attributes = True
+\ No newline at end of file
++        from_attributes = True
++
++# Properties to return via API
++class Character(CharacterInDB):
++    pass
+Index: rag-service/requirements-app.txt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>fastapi>=0.104.0\r\nuvicorn>=0.23.0\r\nlangchain>=0.1.0\r\nlangchain-community>=0.0.22\r\nlangchain-core>=0.1.27\r\nchromadb>=0.4.22\r\nPyPDF2>=3.0.0\r\nsentence-transformers[torch]>=2.2.0\r\nminio>=7.1.0\r\npyyaml>=6.0\r\npython-multipart>=0.0.6
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/rag-service/requirements-app.txt b/rag-service/requirements-app.txt
+--- a/rag-service/requirements-app.txt	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/rag-service/requirements-app.txt	(date 1766262433814)
+@@ -1,11 +1,13 @@
+ fastapi>=0.104.0
+ uvicorn>=0.23.0
+-langchain>=0.1.0
+-langchain-community>=0.0.22
+-langchain-core>=0.1.27
++langchain>=0.3.0
++langchain-community>=0.3.0
++langchain-core>=0.3.0
+ chromadb>=0.4.22
+ PyPDF2>=3.0.0
+-sentence-transformers[torch]>=2.2.0
++sentence-transformers[torch]>=2.2.2
+ minio>=7.1.0
+ pyyaml>=6.0
+-python-multipart>=0.0.6
+\ No newline at end of file
++python-multipart>=0.0.6
++retrying>=1.3.4
++langchain-huggingface>=0.1.0
+Index: rag-service/requirements.txt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># Зависимости для RAG-сервиса Ai-DnD\r\n# Специальная конфигурация для Windows + Docker\r\n\r\nfastapi>=0.104.0\r\nuvicorn>=0.23.0\r\nlangchain>=0.1.0\r\nlangchain-community>=0.0.22\r\nlangchain-core>=0.1.27\r\nchromadb>=0.4.22\r\nPyPDF2>=3.0.0\r\nsentence-transformers[torch]>=2.2.0\r\nminio>=7.1.0\r\npyyaml>=6.0\r\npython-multipart>=0.0.6\r\n\r\n# Конфигурация pip (эти параметры нужно передавать в командной строке, а не в requirements.txt)\r\n\r\n# Допустимые параметры в requirements.txt:\r\n# - Ссылки на пакеты\r\n# - Условия установки\r\n# - Спецификации версий\r\n\r\n# Недопустимые параметры (должны быть в командной строке):\r\n# - --use-deprecated\r\n# - --no-cache-dir\r\n# - --timeout\r\n# - --retries\r\n# - --disable-pip-version-check\r\n\r\n# Допустимые конфигурационные директивы:\r\n# Основные зависимости\r\nfastapi>=0.104.0\r\nuvicorn>=0.23.0\r\nlangchain>=0.1.0\r\nlangchain-community>=0.0.22\r\nlangchain-core>=0.1.27\r\nchromadb>=0.4.22\r\nPyPDF2>=3.0.0\r\nsentence-transformers[torch]>=2.2.0\r\nminio>=7.1.0\r\npyyaml>=6.0\r\npython-multipart>=0.0.6\r\n\r\n# Источники пакетов перенесены в Dockerfile\r\n# --find-links https://download.pytorch.org/whl/torch_stable.html\r\n# --index-url https://pypi.org/simple/\r\n# --extra-index-url https://pypi.org/simple/\r\n\r\n# Отдельные зависимости для быстрой установки\r\n# Установка по группам для ускорения сборки\r\n\r\n# Core dependencies (быстрые)\r\nfastapi>=0.104.0\r\nuvicorn>=0.23.0\r\nPyPDF2>=3.0.0\r\nminio>=7.1.0\r\npyyaml>=6.0\r\npython-multipart>=0.0.6\r\n\r\n# Heavy dependencies (тяжелые)\r\nlangchain>=0.1.0\r\nlangchain-community>=0.0.22\r\nlangchain-core>=0.1.27\r\nchromadb>=0.4.22\r\nsentence-transformers[torch]>=2.2.0
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/rag-service/requirements.txt b/rag-service/requirements.txt
+--- a/rag-service/requirements.txt	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/rag-service/requirements.txt	(date 1766285225821)
+@@ -12,6 +12,8 @@
+ minio>=7.1.0
+ pyyaml>=6.0
+ python-multipart>=0.0.6
++transformers>=4.34.0
++sentencepiece>=0.1.99
+ 
+ # Конфигурация pip (эти параметры нужно передавать в командной строке, а не в requirements.txt)
+ 
+@@ -40,6 +42,8 @@
+ minio>=7.1.0
+ pyyaml>=6.0
+ python-multipart>=0.0.6
++transformers>=4.34.0
++sentencepiece>=0.1.99
+ 
+ # Источники пакетов перенесены в Dockerfile
+ # --find-links https://download.pytorch.org/whl/torch_stable.html
+@@ -56,10 +60,14 @@
+ minio>=7.1.0
+ pyyaml>=6.0
+ python-multipart>=0.0.6
++transformers>=4.34.0
++sentencepiece>=0.1.99
+ 
+ # Heavy dependencies (тяжелые)
+ langchain>=0.1.0
+ langchain-community>=0.0.22
+ langchain-core>=0.1.27
+ chromadb>=0.4.22
+-sentence-transformers[torch]>=2.2.0
+\ No newline at end of file
++sentence-transformers[torch]>=2.2.0
++transformers>=4.34.0
++sentencepiece>=0.1.99
+\ No newline at end of file
+Index: backend/src/schemas/__init__.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># Empty __init__.py to prevent circular imports\r\n# All schemas should be imported directly from their respective modules\r\n# For example: from src.schemas.user import User, UserCreate\r\n#              from src.schemas.character import Character, CharacterCreate\r\n\r\n__all__ = []
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/schemas/__init__.py b/backend/src/schemas/__init__.py
+--- a/backend/src/schemas/__init__.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/schemas/__init__.py	(date 1765812695206)
+@@ -2,5 +2,4 @@
+ # All schemas should be imported directly from their respective modules
+ # For example: from src.schemas.user import User, UserCreate
+ #              from src.schemas.character import Character, CharacterCreate
+-
+-__all__ = []
+\ No newline at end of file
++__all__ = []
+Index: rag-service/config.yaml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>books:\r\n  - name: \"Player's Handbook\"\r\n    file: \"phb.pdf\"\r\n    sections:\r\n      - \"Spells\"\r\n      - \"Combat\"\r\n      - \"Classes\"\r\n      - \"Equipment\"\r\n  - name: \"Dungeon Master's Guide\"\r\n    file: \"dmg.pdf\"\r\n    sections:\r\n      - \"Creating Adventures\"\r\n      - \"Treasure\"\r\n      - \"Magic Items\"\r\n  - name: \"Systems Reference Document\"\r\n    file: \"srd.pdf\"\r\n    sections:\r\n      - \"All\"\r\n\r\nminio:\r\n  bucket: \"dnd-books\"\r\n  endpoint: \"minio:9000\"\r\n\r\nvectorstore:\r\n  path: \"/app/chroma.db\"\r\n  collection_name: \"dnd_rules\"\r\n\r\nembedding:\r\n  model: \"all-MiniLM-L6-v2\"\r\n\r\npdf:\r\n  chunk_size: 512\r\n  chunk_overlap: 64
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/rag-service/config.yaml b/rag-service/config.yaml
+--- a/rag-service/config.yaml	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/rag-service/config.yaml	(date 1766263567995)
+@@ -26,7 +26,7 @@
+   collection_name: "dnd_rules"
+ 
+ embedding:
+-  model: "all-MiniLM-L6-v2"
++  model_path: "/app/models/multilingual-e5-base"
+ 
+ pdf:
+   chunk_size: 512
+Index: rag-service/requirements-base.txt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>torch==2.9.0+cu126\r\ntorchvision==0.24.0+cu126\r\ntorchaudio==2.9.0+cu126\r\n--index-url https://download.pytorch.org/whl/cu126
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/rag-service/requirements-base.txt b/rag-service/requirements-base.txt
+--- a/rag-service/requirements-base.txt	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/rag-service/requirements-base.txt	(date 1766180317751)
+@@ -1,4 +1,4 @@
+-torch==2.9.0+cu126
+-torchvision==0.24.0+cu126
+-torchaudio==2.9.0+cu126
++torch==2.7.1+cu126
++torchvision==0.22.1+cu126
++torchaudio==2.7.1+cu126
+ --index-url https://download.pytorch.org/whl/cu126
+\ No newline at end of file
+Index: backend/src/schemas/dice_rolls.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from __future__ import annotations\r\n\r\nfrom pydantic import BaseModel\r\nfrom typing import List, Optional\r\nfrom datetime import datetime\r\n\r\n\r\nclass DiceRollBase(BaseModel):\r\n    dice_type: str\r\n    roll_result: int\r\n    modifier: int = 0\r\n    total: int\r\n    description: Optional[str] = None\r\n\r\n\r\nclass DiceRollCreate(DiceRollBase):\r\n    pass\r\n\r\n\r\nclass DiceRoll(DiceRollBase):\r\n    id: int\r\n    character_id: int\r\n    created_at: datetime
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/schemas/dice_rolls.py b/backend/src/schemas/dice_rolls.py
+--- a/backend/src/schemas/dice_rolls.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/schemas/dice_rolls.py	(date 1765812685055)
+@@ -1,23 +1,33 @@
+-from __future__ import annotations
+-
+ from pydantic import BaseModel
+-from typing import List, Optional
++from typing import Optional
+ from datetime import datetime
+ 
+-
++# Shared properties
+ class DiceRollBase(BaseModel):
+-    dice_type: str
++    dice_type: str  # d4, d6, d8, d10, d12, d20, d100
+     roll_result: int
+     modifier: int = 0
+     total: int
++    character_id: int
+     description: Optional[str] = None
+ 
+-
++# Properties to receive via API on creation
+ class DiceRollCreate(DiceRollBase):
+     pass
+ 
++# Properties to receive via API on update
++# Dice rolls are usually immutable once made
++class DiceRollUpdate(BaseModel):
++    description: Optional[str] = None
+ 
+-class DiceRoll(DiceRollBase):
++# Additional properties stored in DB
++class DiceRollInDB(DiceRollBase):
+     id: int
+-    character_id: int
+-    created_at: datetime
+\ No newline at end of file
++    created_at: datetime
++
++    class Config:
++        from_attributes = True
++
++# Properties to return via API
++class DiceRoll(DiceRollInDB):
++    pass
+Index: backend/src/routers/actions.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from fastapi import APIRouter, Depends, HTTPException, status\r\nfrom sqlalchemy.orm import Session\r\nfrom typing import List, Annotated\r\n\r\nfrom .. import schemas, models, database\r\n\r\ndef get_db():\r\n    db = database.SessionLocal()\r\n    try:\r\n        yield db\r\n    finally:\r\n        db.close()\r\n\r\nrouter = APIRouter(\r\n    prefix=\"/actions\",\r\n    tags=[\"actions\"]\r\n)\r\n\r\n@router.get(\"/\", response_model=List[schemas.CharacterAction])\r\ndef get_actions(\r\n    skip: int = 0, \r\n    limit: int = 100, \r\n    db: Session = Depends(get_db)\r\n):\r\n    actions = db.query(models.CharacterAction).offset(skip).limit(limit).all()\r\n    return actions\r\n\r\n@router.get(\"/{action_id}\", response_model=schemas.CharacterAction)\r\ndef get_action(action_id: int, db: Session = Depends(get_db)):\r\n    action = db.query(models.CharacterAction).filter(models.CharacterAction.id == action_id).first()\r\n    if action is None:\r\n        raise HTTPException(status_code=404, detail=\"Action not found\")\r\n    return action\r\n\r\n@router.post(\"/\", response_model=schemas.CharacterAction)\r\ndef create_action(\r\n    action: schemas.CharacterActionCreate, \r\n    db: Session = Depends(get_db)\r\n):\r\n    db_action = models.CharacterAction(**action.dict())\r\n    db.add(db_action)\r\n    db.commit()\r\n    db.refresh(db_action)\r\n    return db_action\r\n\r\n@router.delete(\"/{action_id}\")\r\ndef delete_action(action_id: int, db: Session = Depends(get_db)):\r\n    action = db.query(models.CharacterAction).filter(models.CharacterAction.id == action_id).first()\r\n    if action is None:\r\n        raise HTTPException(status_code=404, detail=\"Action not found\")\r\n    \r\n    db.delete(action)\r\n    db.commit()\r\n    return {\"message\": \"Action deleted successfully\"}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/routers/actions.py b/backend/src/routers/actions.py
+--- a/backend/src/routers/actions.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/routers/actions.py	(date 1765815435686)
+@@ -2,21 +2,17 @@
+ from sqlalchemy.orm import Session
+ from typing import List, Annotated
+ 
+-from .. import schemas, models, database
+-
+-def get_db():
+-    db = database.SessionLocal()
+-    try:
+-        yield db
+-    finally:
+-        db.close()
++from .. import models
++from .. import schemas
++from ..schemas.actions import CharacterAction, CharacterActionCreate
++from ..database import SessionLocal, get_db
+ 
+ router = APIRouter(
+     prefix="/actions",
+     tags=["actions"]
+ )
+ 
+-@router.get("/", response_model=List[schemas.CharacterAction])
++@router.get("/", response_model=List[CharacterAction])
+ def get_actions(
+     skip: int = 0, 
+     limit: int = 100, 
+@@ -25,16 +21,16 @@
+     actions = db.query(models.CharacterAction).offset(skip).limit(limit).all()
+     return actions
+ 
+-@router.get("/{action_id}", response_model=schemas.CharacterAction)
++@router.get("/{action_id}", response_model=CharacterAction)
+ def get_action(action_id: int, db: Session = Depends(get_db)):
+     action = db.query(models.CharacterAction).filter(models.CharacterAction.id == action_id).first()
+     if action is None:
+         raise HTTPException(status_code=404, detail="Action not found")
+     return action
+ 
+-@router.post("/", response_model=schemas.CharacterAction)
++@router.post("/", response_model=CharacterAction)
+ def create_action(
+-    action: schemas.CharacterActionCreate, 
++    action: CharacterActionCreate, 
+     db: Session = Depends(get_db)
+ ):
+     db_action = models.CharacterAction(**action.dict())
+Index: rag-service/Dockerfile.prod
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># Stage 1: Базовый образ с предустановленными тяжелыми зависимостями\r\nFROM nvidia/cuda:12.6.0-devel-ubuntu22.04 AS base-deps\r\n\r\n# Определение аргументов сборки\r\nARG TORCH_VERSION=2.7.1\r\nARG CUDA_TAG=cu126\r\n\r\n# Установка кэшированного источника пакетов для ускорения сборки\r\nENV DEBIAN_FRONTEND=noninteractive\r\nRUN mkdir -p /etc/apt/apt.conf.d && \\\r\n    echo 'Acquire::Retries \"3\";' > /etc/apt/apt.conf.d/80-retries && \\\r\n    echo 'Acquire::http::Timeout \"60\";' > /etc/apt/apt.conf.d/80-timeout\r\n\r\n# Установка Python и системных зависимостей\r\nRUN apt-get update && apt-get install -y --no-install-recommends \\\r\n    python3.11 \\\r\n    python3.11-dev \\\r\n    python3.11-venv \\\r\n    python3-pip \\\r\n    gcc \\\r\n    g++ \\\r\n    && rm -rf /var/lib/apt/lists/* \\\r\n    \\\r\n    && python3.11 -m pip install --upgrade pip setuptools wheel \\\r\n    \\\r\n    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\r\n\r\nWORKDIR /app\r\n\r\n# Копирование предварительно загруженных wheel-файлов\r\nCOPY wheels/ /tmp/wheels/\r\n\r\n# Установка PyTorch из локальных wheel-файлов\r\nRUN python3.11 -m pip install --no-cache-dir /tmp/wheels/*.whl\r\n\r\n# Проверка установки PyTorch (без проверки CUDA, так как GPU недоступен на этапе сборки)\r\nRUN python3.11 -c \"import torch; print('Torch:', torch.__version__); print('CUDA version:', torch.version.cuda)\"\r\n\r\n# Создаем отдельный образ для базовых Python-зависимостей\r\nFROM base-deps AS core-deps\r\n\r\n# Копирование app-зависимостей\r\nCOPY requirements-app.txt .\r\n\r\n# Установка остальных зависимостей\r\nRUN pip install --no-cache-dir --disable-pip-version-check --timeout 600 --retries 40 -r requirements-app.txt\r\n\r\n# Основной образ приложения (оптимизированный)\r\nFROM nvidia/cuda:12.6.0-runtime-ubuntu22.04 AS rag-service\r\n\r\n# Определение аргументов сборки (дублирование для runtime stage)\r\nARG TORCH_VERSION=2.7.1\r\nARG CUDA_TAG=cu126\r\n\r\n# Установка переменных окружения для CUDA\r\nENV DEBIAN_FRONTEND=noninteractive\r\nENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512\r\nENV CUDA_VISIBLE_DEVICES=0\r\n\r\n# Установка Python\r\nRUN apt-get update && apt-get install -y --no-install-recommends \\\r\n    python3.11 \\\r\n    python3.11-venv \\\r\n    python3-pip \\\r\n    && rm -rf /var/lib/apt/lists/*\r\n\r\n# Создание пользователя безопасности\r\nRUN useradd -m appuser\r\n\r\n# Копирование Python-зависимостей из core-deps\r\nCOPY --from=core-deps /usr/local/lib/python3.11 /usr/local/lib/python3.11\r\nCOPY --from=core-deps /usr/local/bin /usr/local/bin\r\n\r\n# Установка рабочей директории\r\nWORKDIR /app\r\n\r\n# Копирование приложения\r\nCOPY app/ /app/\r\n\r\n# Копирование конфигурации\r\nCOPY config.yaml /app/config.yaml\r\n\r\n# Создание директории для векторного хранилища\r\nRUN mkdir -p /app/chroma.db\r\n\r\n# Смена пользователя на безопасного\r\nUSER appuser\r\n\r\n# Экспорт порта\r\nEXPOSE 8080\r\n\r\n# Добавление HEALTHCHECK\r\nHEALTHCHECK CMD curl -f http://localhost:80/health || exit 1\r\n\r\n# Запуск приложения\r\nCMD [\"python3.11\", \"-m\", \"uvicorn\", \"app.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8080\", \"--workers\", \"1\"]
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/rag-service/Dockerfile.prod b/rag-service/Dockerfile.prod
+--- a/rag-service/Dockerfile.prod	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/rag-service/Dockerfile.prod	(date 1766235514299)
+@@ -77,11 +77,15 @@
+ # Копирование приложения
+ COPY app/ /app/
+ 
++# Установка прав на скопированные файлы приложения
++RUN chown -R appuser:appuser /app
++
+ # Копирование конфигурации
+ COPY config.yaml /app/config.yaml
+ 
+ # Создание директории для векторного хранилища
+-RUN mkdir -p /app/chroma.db
++RUN mkdir -p /app/chroma.db && \
++    chown -R appuser:appuser /app
+ 
+ # Смена пользователя на безопасного
+ USER appuser
+@@ -90,7 +94,7 @@
+ EXPOSE 8080
+ 
+ # Добавление HEALTHCHECK
+-HEALTHCHECK CMD curl -f http://localhost:80/health || exit 1
++HEALTHCHECK CMD curl -f http://localhost:8080/health || exit 1
+ 
+ # Запуск приложения
+-CMD ["python3.11", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
+\ No newline at end of file
++CMD ["python3.11", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
+\ No newline at end of file
+Index: backend/src/schemas/story_log.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from __future__ import annotations\r\n\r\nfrom pydantic import BaseModel\r\nfrom typing import List, Optional\r\nfrom datetime import datetime\r\n\r\n\r\nclass StoryLogEntryBase(BaseModel):\r\n    content: str\r\n\r\n\r\nclass StoryLogEntryCreate(StoryLogEntryBase):\r\n    pass\r\n\r\n\r\nclass StoryLogEntry(StoryLogEntryBase):\r\n    id: int\r\n    character_id: int\r\n    created_at: datetime
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/schemas/story_log.py b/backend/src/schemas/story_log.py
+--- a/backend/src/schemas/story_log.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/schemas/story_log.py	(date 1765812676955)
+@@ -1,19 +1,28 @@
+-from __future__ import annotations
+-
+ from pydantic import BaseModel
+-from typing import List, Optional
+ from datetime import datetime
+ 
+-
++# Shared properties
+ class StoryLogEntryBase(BaseModel):
+     content: str
++    character_id: int
+ 
+-
++# Properties to receive via API on creation
+ class StoryLogEntryCreate(StoryLogEntryBase):
+     pass
+ 
++# Properties to receive via API on update
++# Usually, story log entries are append-only, so updates might not be needed
++class StoryLogEntryUpdate(BaseModel):
++    content: str
+ 
+-class StoryLogEntry(StoryLogEntryBase):
++# Additional properties stored in DB
++class StoryLogEntryInDB(StoryLogEntryBase):
+     id: int
+-    character_id: int
+-    created_at: datetime
+\ No newline at end of file
++    created_at: datetime
++
++    class Config:
++        from_attributes = True
++
++# Properties to return via API
++class StoryLogEntry(StoryLogEntryInDB):
++    pass
+Index: backend/src/routers/dice_rolls.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from fastapi import APIRouter, Depends, HTTPException, status\r\nfrom sqlalchemy.orm import Session\r\nfrom typing import List, Annotated\r\n\r\nfrom .. import schemas, models, database\r\n\r\ndef get_db():\r\n    db = database.SessionLocal()\r\n    try:\r\n        yield db\r\n    finally:\r\n        db.close()\r\n\r\nrouter = APIRouter(\r\n    prefix=\"/dice_rolls\",\r\n    tags=[\"dice_rolls\"]\r\n)\r\n\r\n@router.get(\"/\", response_model=List[schemas.DiceRoll])\r\ndef get_dice_rolls(\r\n    skip: int = 0, \r\n    limit: int = 100, \r\n    db: Session = Depends(get_db)\r\n):\r\n    rolls = db.query(models.DiceRoll).offset(skip).limit(limit).all()\r\n    return rolls\r\n\r\n@router.get(\"/{roll_id}\", response_model=schemas.DiceRoll)\r\ndef get_dice_roll(roll_id: int, db: Session = Depends(get_db)):\r\n    roll = db.query(models.DiceRoll).filter(models.DiceRoll.id == roll_id).first()\r\n    if roll is None:\r\n        raise HTTPException(status_code=404, detail=\"Dice roll not found\")\r\n    return roll\r\n\r\n@router.post(\"/\", response_model=schemas.DiceRoll)\r\ndef create_dice_roll(\r\n    roll: schemas.DiceRollCreate, \r\n    db: Session = Depends(get_db)\r\n):\r\n    db_roll = models.DiceRoll(**roll.dict())\r\n    db.add(db_roll)\r\n    db.commit()\r\n    db.refresh(db_roll)\r\n    return db_roll\r\n\r\n@router.delete(\"/{roll_id}\")\r\ndef delete_dice_roll(roll_id: int, db: Session = Depends(get_db)):\r\n    roll = db.query(models.DiceRoll).filter(models.DiceRoll.id == roll_id).first()\r\n    if roll is None:\r\n        raise HTTPException(status_code=404, detail=\"Dice roll not found\")\r\n    \r\n    db.delete(roll)\r\n    db.commit()\r\n    return {\"message\": \"Dice roll deleted successfully\"}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/routers/dice_rolls.py b/backend/src/routers/dice_rolls.py
+--- a/backend/src/routers/dice_rolls.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/routers/dice_rolls.py	(date 1765815443701)
+@@ -2,21 +2,17 @@
+ from sqlalchemy.orm import Session
+ from typing import List, Annotated
+ 
+-from .. import schemas, models, database
+-
+-def get_db():
+-    db = database.SessionLocal()
+-    try:
+-        yield db
+-    finally:
+-        db.close()
++from .. import models
++from .. import schemas
++from ..schemas.dice_rolls import DiceRoll, DiceRollCreate
++from ..database import SessionLocal, get_db
+ 
+ router = APIRouter(
+     prefix="/dice_rolls",
+     tags=["dice_rolls"]
+ )
+ 
+-@router.get("/", response_model=List[schemas.DiceRoll])
++@router.get("/", response_model=List[DiceRoll])
+ def get_dice_rolls(
+     skip: int = 0, 
+     limit: int = 100, 
+@@ -25,16 +21,16 @@
+     rolls = db.query(models.DiceRoll).offset(skip).limit(limit).all()
+     return rolls
+ 
+-@router.get("/{roll_id}", response_model=schemas.DiceRoll)
++@router.get("/{roll_id}", response_model=DiceRoll)
+ def get_dice_roll(roll_id: int, db: Session = Depends(get_db)):
+     roll = db.query(models.DiceRoll).filter(models.DiceRoll.id == roll_id).first()
+     if roll is None:
+         raise HTTPException(status_code=404, detail="Dice roll not found")
+     return roll
+ 
+-@router.post("/", response_model=schemas.DiceRoll)
++@router.post("/", response_model=DiceRoll)
+ def create_dice_roll(
+-    roll: schemas.DiceRollCreate, 
++    roll: DiceRollCreate, 
+     db: Session = Depends(get_db)
+ ):
+     db_roll = models.DiceRoll(**roll.dict())
+Index: rag-service/app/main.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from fastapi import FastAPI, HTTPException, Query\r\nfrom typing import List, Dict\r\nimport logging\r\nimport os\r\n\r\n# Настройка логирования\r\nlogging.basicConfig(level=logging.INFO)\r\nlogger = logging.getLogger(__name__)\r\n\r\n# Импорты после настройки логирования\r\nimport yaml\r\nfrom minio import Minio\r\n\r\nfrom loader import PDFLoader, Document\r\nfrom vectorstore import VectorStoreManager\r\n\r\napp = FastAPI(\r\n    title=\"RAG Service for AI DnD\",\r\n    description=\"Retrieval-Augmented Generation service for D&D 5e rules\",\r\n    version=\"1.0.0\"\r\n)\r\n\r\n# Глобальные переменные\r\nvectorstore_manager: VectorStoreManager = None\r\n\r\ndef load_config():\r\n    \"\"\"Загрузка конфигурации из config.yaml\"\"\"\r\n    config_path = os.getenv(\"CONFIG_PATH\", \"/app/config.yaml\")\r\n    with open(config_path, \"r\", encoding=\"utf-8\") as file:\r\n        return yaml.safe_load(file)\r\n\r\n@app.on_event(\"startup\")\r\nasync def startup_event():\r\n    \"\"\"Инициализация сервиса при старте\"\"\"\r\n    global vectorstore_manager\r\n    \r\n    config = load_config()\r\n    \r\n    # Инициализация MinIO клиента\r\n    minio_client = Minio(\r\n        os.getenv(\"MINIO_ENDPOINT\", config['minio']['endpoint']),\r\n        access_key=os.getenv(\"MINIO_ACCESS_KEY\"),\r\n        secret_key=os.getenv(\"MINIO_SECRET_KEY\"),\r\n        secure=False\r\n    )\r\n    \r\n    bucket_name = os.getenv(\"MINIO_BUCKET\", config['minio']['bucket'])\r\n    \r\n    # Проверка существования бакета\r\n    if not minio_client.bucket_exists(bucket_name):\r\n        raise Exception(f\"Bucket {bucket_name} does not exist\")\r\n    \r\n    # Инициализация загрузчика PDF\r\n    # Локальные PDF файлы для тестирования при первом запуске\r\n    local_pdfs_dir = \"/app/dnd-books\"\r\n    \r\n    # Если MinIO недоступен или бакет пуст, используем локальные PDF\r\n    try:\r\n        objects = minio_client.list_objects(bucket_name, recursive=True)\r\n        has_files = any(True for _ in objects)  # Проверяем, есть ли файлы\r\n        \r\n        if not has_files:\r\n            logger.warning(f\"Bucket {bucket_name} is empty, using local PDFs from {local_pdfs_dir}\")\r\n            pdf_loader = PDFLoader.from_local_directory(local_pdfs_dir, bucket_name)\r\n        else:\r\n            logger.info(f\"Using MinIO bucket {bucket_name} for PDF files\")\r\n            pdf_loader = PDFLoader(minio_client, bucket_name)\r\n            \r\n    except Exception as e:\r\n        logger.error(f\"MinIO connection failed: {e}, using local PDFs\")\r\n        pdf_loader = PDFLoader.from_local_directory(local_pdfs_dir, bucket_name)\r\n    \r\n    # Инициализация векторного хранилища\r\n    persist_directory = config['vectorstore']['path']\r\n    collection_name = config['vectorstore']['collection_name']\r\n    vectorstore_manager = VectorStoreManager(persist_directory, collection_name)\r\n    \r\n    # Проверка, пусто ли векторное хранилище\r\n    collection = vectorstore_manager.client.get_collection(collection_name)\r\n    if collection.count() == 0:\r\n        logger.info(\"Vectorstore is empty. Starting indexing process...\")\r\n        \r\n        # Загрузка и индексация всех книг из конфигурации\r\n        books = config['books']\r\n        total_docs = 0\r\n        \r\n        for book in books:\r\n            pdf_file = book['file']\r\n            logger.info(f\"Processing book: {book['name']} ({pdf_file})\")\r\n            \r\n            try:\r\n                # Загрузка и чанкинг PDF\r\n                documents = pdf_loader.load_and_chunk_pdf(\r\n                    pdf_file,\r\n                    chunk_size=config['pdf']['chunk_size'],\r\n                    chunk_overlap=config['pdf']['chunk_overlap']\r\n                )\r\n                \r\n                # Преобразование в словари для VectorStore\r\n                docs_dict = [\r\n                    {\"text\": doc.text, \"metadata\": doc.metadata} \r\n                    for doc in documents\r\n                ]\r\n                \r\n                # Добавление в векторное хранилище\r\n                vectorstore_manager.add_documents(docs_dict)\r\n                total_docs += len(documents)\r\n                \r\n            except Exception as e:\r\n                logger.error(f\"Error processing book {book['name']}: {e}\")\r\n                continue\r\n        \r\n        logger.info(f\"Indexing completed. Added {total_docs} documents to vectorstore\")\r\n    else:\r\n        logger.info(f\"Vectorstore already contains {collection.count()} documents. Skipping indexing.\")\r\n\r\n@app.get(\"/\")\r\nasync def root():\r\n    return {\"message\": \"RAG Service for AI DnD is running\"}\r\n\r\n@app.get(\"/health\")\r\nasync def health_check():\r\n    \"\"\"Проверка работоспособности сервиса\"\"\"\r\n    try:\r\n        config = load_config()\r\n        collection = vectorstore_manager.client.get_collection(\r\n            config['vectorstore']['collection_name']\r\n        )\r\n        return {\r\n            \"status\": \"healthy\",\r\n            \"vectorstore_count\": collection.count(),\r\n            \"message\": \"Service is ready to serve requests\"\r\n        }\r\n    except Exception as e:\r\n        logger.error(f\"Health check failed: {e}\")\r\n        raise HTTPException(status_code=503, detail=\"Service is not healthy\")\r\n\r\n@app.get(\"/retrieve\")\r\nasync def retrieve(\r\n    query: str = Query(..., description=\"Поисковый запрос\"),\r\n    top_k: int = Query(3, ge=1, le=10, description=\"Количество возвращаемых результатов\")\r\n) -> Dict:\r\n    \"\"\"\r\n    Извлечение релевантных фрагментов текста на основе запроса\r\n    \"\"\"\r\n    if not query.strip():\r\n        raise HTTPException(status_code=400, detail=\"Query cannot be empty\")\r\n    \r\n    try:\r\n        context = vectorstore_manager.get_relevant_context(query, k=top_k)\r\n        \r\n        return {\r\n            \"query\": query,\r\n            \"context\": context,\r\n            \"sources\": list(set([doc[\"metadata\"][\"source\"] for doc in vectorstore_manager.similarity_search(query, k=top_k)]))\r\n        }\r\n    except Exception as e:\r\n        logger.error(f\"Error during retrieval: {e}\")\r\n        raise HTTPException(status_code=500, detail=\"Error during retrieval\")\r\n\r\nif __name__ == \"__main__\":\r\n    import uvicorn\r\n    uvicorn.run(\"main:app\", host=\"0.0.0.0\", port=80, reload=False)
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/rag-service/app/main.py b/rag-service/app/main.py
+--- a/rag-service/app/main.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/rag-service/app/main.py	(date 1766240934504)
+@@ -2,6 +2,7 @@
+ from typing import List, Dict
+ import logging
+ import os
++import time  # Для задержки в retry
+ 
+ # Настройка логирования
+ logging.basicConfig(level=logging.INFO)
+@@ -10,6 +11,7 @@
+ # Импорты после настройки логирования
+ import yaml
+ from minio import Minio
++from retrying import retry  # Новый импорт для ретраев
+ 
+ from loader import PDFLoader, Document
+ from vectorstore import VectorStoreManager
+@@ -29,90 +31,108 @@
+     with open(config_path, "r", encoding="utf-8") as file:
+         return yaml.safe_load(file)
+ 
++# Функция для ретрая операций с MinIO
++@retry(stop_max_attempt_number=3, wait_fixed=5000)  # 3 попытки, задержка 5 сек
++def check_minio_connection(minio_client, bucket_name):
++    """Проверка подключения к MinIO с ретраями"""
++    if not minio_client.bucket_exists(bucket_name):
++        raise Exception(f"Bucket {bucket_name} does not exist")
++    return True
++
+ @app.on_event("startup")
+ async def startup_event():
+     """Инициализация сервиса при старте"""
+     global vectorstore_manager
+     
+-    config = load_config()
+-    
+-    # Инициализация MinIO клиента
+-    minio_client = Minio(
+-        os.getenv("MINIO_ENDPOINT", config['minio']['endpoint']),
+-        access_key=os.getenv("MINIO_ACCESS_KEY"),
+-        secret_key=os.getenv("MINIO_SECRET_KEY"),
+-        secure=False
+-    )
+-    
+-    bucket_name = os.getenv("MINIO_BUCKET", config['minio']['bucket'])
+-    
+-    # Проверка существования бакета
+-    if not minio_client.bucket_exists(bucket_name):
+-        raise Exception(f"Bucket {bucket_name} does not exist")
+-    
+-    # Инициализация загрузчика PDF
+-    # Локальные PDF файлы для тестирования при первом запуске
+-    local_pdfs_dir = "/app/dnd-books"
+-    
+-    # Если MinIO недоступен или бакет пуст, используем локальные PDF
+-    try:
+-        objects = minio_client.list_objects(bucket_name, recursive=True)
+-        has_files = any(True for _ in objects)  # Проверяем, есть ли файлы
+-        
+-        if not has_files:
+-            logger.warning(f"Bucket {bucket_name} is empty, using local PDFs from {local_pdfs_dir}")
+-            pdf_loader = PDFLoader.from_local_directory(local_pdfs_dir, bucket_name)
+-        else:
+-            logger.info(f"Using MinIO bucket {bucket_name} for PDF files")
+-            pdf_loader = PDFLoader(minio_client, bucket_name)
+-            
+-    except Exception as e:
+-        logger.error(f"MinIO connection failed: {e}, using local PDFs")
+-        pdf_loader = PDFLoader.from_local_directory(local_pdfs_dir, bucket_name)
+-    
+-    # Инициализация векторного хранилища
+-    persist_directory = config['vectorstore']['path']
+-    collection_name = config['vectorstore']['collection_name']
+-    vectorstore_manager = VectorStoreManager(persist_directory, collection_name)
+-    
+-    # Проверка, пусто ли векторное хранилище
+-    collection = vectorstore_manager.client.get_collection(collection_name)
+-    if collection.count() == 0:
+-        logger.info("Vectorstore is empty. Starting indexing process...")
+-        
+-        # Загрузка и индексация всех книг из конфигурации
+-        books = config['books']
+-        total_docs = 0
+-        
+-        for book in books:
+-            pdf_file = book['file']
+-            logger.info(f"Processing book: {book['name']} ({pdf_file})")
+-            
+-            try:
+-                # Загрузка и чанкинг PDF
+-                documents = pdf_loader.load_and_chunk_pdf(
+-                    pdf_file,
+-                    chunk_size=config['pdf']['chunk_size'],
+-                    chunk_overlap=config['pdf']['chunk_overlap']
+-                )
+-                
+-                # Преобразование в словари для VectorStore
+-                docs_dict = [
+-                    {"text": doc.text, "metadata": doc.metadata} 
+-                    for doc in documents
+-                ]
+-                
+-                # Добавление в векторное хранилище
+-                vectorstore_manager.add_documents(docs_dict)
+-                total_docs += len(documents)
+-                
+-            except Exception as e:
+-                logger.error(f"Error processing book {book['name']}: {e}")
+-                continue
+-        
+-        logger.info(f"Indexing completed. Added {total_docs} documents to vectorstore")
+-    else:
+-        logger.info(f"Vectorstore already contains {collection.count()} documents. Skipping indexing.")
++    try:
++        logger.info("Startup event started")
++        config = load_config()
++        logger.info("Config loaded successfully")
++        
++        # Инициализация MinIO клиента
++        minio_client = Minio(
++            os.getenv("MINIO_ENDPOINT", config['minio']['endpoint']),
++            access_key=os.getenv("MINIO_ACCESS_KEY"),
++            secret_key=os.getenv("MINIO_SECRET_KEY"),
++            secure=False
++        )
++        logger.info("MinIO client created")
++        
++        bucket_name = os.getenv("MINIO_BUCKET", config['minio']['bucket'])
++        
++        # Локальные PDF файлы
++        local_pdfs_dir = "/app/dnd-books"
++        
++        try:
++            # Проверяем подключение с ретраями
++            check_minio_connection(minio_client, bucket_name)
++            logger.info("MinIO connection OK, using bucket")
++            
++            # Если подключение OK, проверяем файлы
++            objects = minio_client.list_objects(bucket_name, recursive=True)
++            has_files = any(True for _ in objects)  # Проверяем, есть ли файлы
++            
++            if not has_files:
++                logger.warning(f"Bucket {bucket_name} is empty, fallback to local PDFs")
++                pdf_loader = PDFLoader.from_local_directory(local_pdfs_dir, bucket_name)
++            else:
++                logger.info(f"Using MinIO bucket {bucket_name} for PDF files")
++                pdf_loader = PDFLoader(minio_client, bucket_name)
++                
++        except Exception as e:
++            logger.warning(f"MinIO failed: {str(e)}, fallback to local")
++            # fallback pdf_loader
++            pdf_loader = PDFLoader.from_local_directory(local_pdfs_dir, bucket_name)
++        
++        # Инициализация векторного хранилища
++        persist_directory = config['vectorstore']['path']
++        collection_name = config['vectorstore']['collection_name']
++        vectorstore_manager = VectorStoreManager(persist_directory, collection_name)
++        logger.info("Vectorstore manager initialized")
++        
++        # Проверка, пусто ли векторное хранилище
++        collection = vectorstore_manager.client.get_collection(collection_name)
++        logger.info(f"Collection count: {collection.count()}")
++        
++        if collection.count() == 0:
++            logger.info("Vectorstore empty, starting indexing...")
++            
++            # Загрузка и индексация всех книг из конфигурации
++            books = config['books']
++            total_docs = 0
++            
++            for book in books:
++                pdf_file = book['file']
++                logger.info(f"Processing book: {book['name']} ({pdf_file})")
++                
++                try:
++                    # Загрузка и чанкинг PDF
++                    documents = pdf_loader.load_and_chunk_pdf(
++                        pdf_file,
++                        chunk_size=config['pdf']['chunk_size'],
++                        chunk_overlap=config['pdf']['chunk_overlap']
++                    )
++                    
++                    # Преобразование в словари для VectorStore
++                    docs_dict = [
++                        {"text": doc.text, "metadata": doc.metadata} 
++                        for doc in documents
++                    ]
++                    
++                    # Добавление в векторное хранилище
++                    vectorstore_manager.add_documents(docs_dict)
++                    total_docs += len(documents)
++                    
++                except Exception as e:
++                    logger.error(f"Error indexing {book['name']}: {str(e)}")
++                    continue
++            
++            logger.info(f"Indexing completed. Added {total_docs} documents to vectorstore")
++        else:
++            logger.info(f"Vectorstore already contains {collection.count()} documents. Skipping indexing.")
++            
++    except Exception as e:
++        logger.error(f"Startup event failed: {str(e)}", exc_info=True)  # Full traceback
+ 
+ @app.get("/")
+ async def root():
+Index: rag-service/app/vectorstore.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>import os\r\nimport logging\r\nfrom typing import List\r\n\r\nimport torch\r\nimport chromadb\r\nfrom chromadb.config import Settings\r\nfrom langchain_community.vectorstores import Chroma\r\nfrom langchain_community.embeddings import HuggingFaceEmbeddings\r\n\r\nlogger = logging.getLogger(__name__)\r\n\r\nclass VectorStoreManager:\r\n    def __init__(self, persist_directory: str, collection_name: str = \"dnd_rules\"):\r\n        self.persist_directory = persist_directory\r\n        self.collection_name = collection_name\r\n        # Определение устройства для вычислений\r\n        device = \"cuda\" if torch.cuda.is_available() else \"cpu\"\r\n        logger.info(f\"Using device: {device}\")\r\n        \r\n        self.embedding_function = HuggingFaceEmbeddings(\r\n            model_name=\"sentence-transformers/all-MiniLM-L6-v2\",\r\n            model_kwargs={\"device\": device}\r\n        )\r\n        self.vectorstore = None\r\n        self._initialize_vectorstore()\r\n\r\n    def _initialize_vectorstore(self):\r\n        \"\"\"Инициализация Chroma DB с поддержкой сохранения\"\"\"\r\n        chroma_settings = Settings(\r\n            chroma_db_impl=\"duckdb+parquet\",\r\n            persist_directory=self.persist_directory,\r\n            anonymized_telemetry=False\r\n        )\r\n\r\n        self.client = chromadb.PersistentClient(\r\n            path=self.persist_directory,\r\n            settings=chroma_settings\r\n        )\r\n\r\n        self.vectorstore = Chroma(\r\n            client=self.client,\r\n            collection_name=self.collection_name,\r\n            embedding_function=self.embedding_function\r\n        )\r\n        logger.info(f\"Vectorstore initialized at {self.persist_directory}\")\r\n\r\n    def add_documents(self, documents: List[dict]):\r\n        \"\"\"Добавление документов в векторное хранилище\"\"\"\r\n        texts = [doc[\"text\"] for doc in documents]\r\n        metadatas = [doc.get(\"metadata\", {}) for doc in documents]\r\n        \r\n        self.vectorstore.add_texts(\r\n            texts=texts,\r\n            metadatas=metadatas\r\n        )\r\n        logger.info(f\"Added {len(documents)} documents to vectorstore\")\r\n\r\n    def similarity_search(self, query: str, k: int = 3) -> List[dict]:\r\n        \"\"\"Поиск релевантных фрагментов\"\"\"\r\n        results = self.vectorstore.similarity_search(query, k=k)\r\n        return [\r\n            {\r\n                \"text\": doc.page_content,\r\n                \"metadata\": doc.metadata\r\n            } for doc in results\r\n        ]\r\n    \r\n    def get_relevant_context(self, query: str, k: int = 3) -> List[str]:\r\n        \"\"\"Получение только текстового контекста\"\"\"\r\n        results = self.similarity_search(query, k)\r\n        return [item[\"text\"] for item in results]
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/rag-service/app/vectorstore.py b/rag-service/app/vectorstore.py
+--- a/rag-service/app/vectorstore.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/rag-service/app/vectorstore.py	(date 1766286838649)
+@@ -3,10 +3,9 @@
+ from typing import List
+ 
+ import torch
+-import chromadb
+-from chromadb.config import Settings
++import chromadb  # Импорт chromadb напрямую
+ from langchain_community.vectorstores import Chroma
+-from langchain_community.embeddings import HuggingFaceEmbeddings
++from langchain_huggingface import HuggingFaceEmbeddings  # Новый пакет
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -19,30 +18,24 @@
+         logger.info(f"Using device: {device}")
+         
+         self.embedding_function = HuggingFaceEmbeddings(
+-            model_name="sentence-transformers/all-MiniLM-L6-v2",
+-            model_kwargs={"device": device}
++            model_name="/app/models/paraphrase-multilingual-MiniLM-L12-v2",  # Локальный путь в контейнере, проброшенный через volume
++            model_kwargs={"device": device},
++            encode_kwargs={"normalize_embeddings": True}  # Рекомендуется для модели
+         )
+-        self.vectorstore = None
+-        self._initialize_vectorstore()
+-
+-    def _initialize_vectorstore(self):
+-        """Инициализация Chroma DB с поддержкой сохранения"""
+-        chroma_settings = Settings(
+-            chroma_db_impl="duckdb+parquet",
+-            persist_directory=self.persist_directory,
+-            anonymized_telemetry=False
+-        )
+-
++        logger.info("Embeddings model loaded from local path: /app/models/paraphrase-multilingual-MiniLM-L12-v2")
++        # Новый клиент Chroma (без Settings с duckdb)
+         self.client = chromadb.PersistentClient(
+-            path=self.persist_directory,
+-            settings=chroma_settings
++            path=persist_directory  # Путь к директории
++            # settings=chromadb.config.Settings(anonymized_telemetry=False)  # Опционально, если нужно отключить телеметрию
+         )
+-
++        
++        # Vectorstore из LangChain
+         self.vectorstore = Chroma(
+             client=self.client,
+-            collection_name=self.collection_name,
++            collection_name=collection_name,
+             embedding_function=self.embedding_function
+         )
++        
+         logger.info(f"Vectorstore initialized at {self.persist_directory}")
+ 
+     def add_documents(self, documents: List[dict]):
+@@ -69,4 +62,4 @@
+     def get_relevant_context(self, query: str, k: int = 3) -> List[str]:
+         """Получение только текстового контекста"""
+         results = self.similarity_search(query, k)
+-        return [item["text"] for item in results]
+\ No newline at end of file
++        return [item["text"] for item in results]
+Index: rag-service/app/loader.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>import os\r\nimport logging\r\nfrom typing import List, Dict\r\nfrom dataclasses import dataclass\r\n\r\nimport PyPDF2\r\nimport yaml\r\nfrom minio import Minio\r\nfrom minio.error import S3Error\r\n\r\nlogger = logging.getLogger(__name__)\r\n\r\n@dataclass\r\nclass Document:\r\n    text: str\r\n    metadata: Dict\r\n\r\n\r\nclass PDFLoader:\r\n    def __init__(self, minio_client: Minio, bucket_name: str):\r\n        self.minio_client = minio_client\r\n        self.bucket_name = bucket_name\r\n        \r\n    @classmethod\r\n    def from_local_directory(cls, local_dir: str, bucket_name: str):\r\n        \"\"\"Создание загрузчика, который читает PDF из локальной директории\"\"\"\r\n        # Создаем фиктивный MinIO клиент\r\n        loader = cls(None, bucket_name)\r\n        loader.local_dir = local_dir\r\n        return loader\r\n        \r\n    def _use_local_pdf(self, object_name: str) -> str:\r\n        \"\"\"Получение пути к локальному PDF файлу\"\"\"\r\n        local_path = os.path.join(self.local_dir, object_name)\r\n        if os.path.exists(local_path):\r\n            return local_path\r\n        else:\r\n            raise FileNotFoundError(f\"Local PDF not found: {local_path}\")\r\n\r\n    def _download_pdf(self, object_name: str, download_path: str) -> str:\r\n        \"\"\"Скачивание PDF из MinIO или использование локального файла\"\"\"\r\n        try:\r\n            if hasattr(self, 'local_dir') and self.local_dir:\r\n                # Используем локальный файл\r\n                local_path = self._use_local_pdf(object_name)\r\n                # Копируем в временный путь\r\n                import shutil\r\n                shutil.copy2(local_path, download_path)\r\n                logger.info(f\"Used local PDF {local_path} -> {download_path}\")\r\n                return download_path\r\n            else:\r\n                # Используем MinIO\r\n                self.minio_client.fget_object(\r\n                    self.bucket_name, object_name, download_path\r\n                )\r\n                logger.info(f\"Downloaded {object_name} from MinIO to {download_path}\")\r\n                return download_path\r\n                \r\n        except Exception as e:\r\n            logger.error(f\"Error accessing PDF {object_name}: {e}\")\r\n            raise\r\n\r\n    def _extract_text_from_pdf(self, pdf_path: str) -> str:\r\n        \"\"\"Извлечение текста из PDF\"\"\"\r\n        try:\r\n            with open(pdf_path, 'rb') as file:\r\n                reader = PyPDF2.PdfReader(file)\r\n                text = \"\"\r\n                for page in reader.pages:\r\n                    text += page.extract_text() + \"\\n\"\r\n                return text\r\n        except Exception as e:\r\n            logger.error(f\"Error extracting text from PDF {pdf_path}: {e}\")\r\n            raise\r\n\r\n    def _split_text(self, text: str, chunk_size: int = 512, chunk_overlap: int = 64) -> List[str]:\r\n        \"\"\"Разбиение текста на чанки\"\"\"\r\n        words = text.split()\r\n        chunks = []\r\n        start = 0\r\n        \r\n        while start < len(words):\r\n            end = start + chunk_size\r\n            chunk = \" \".join(words[start:end])\r\n            chunks.append(chunk)\r\n            start = end - chunk_overlap\r\n            \r\n        return chunks\r\n\r\n    def load_and_chunk_pdf(self, pdf_object_name: str, chunk_size: int = 512, chunk_overlap: int = 64) -> List[Document]:\r\n        \"\"\"Загрузка, извлечение и чанкинг PDF\"\"\"\r\n        # Определяем путь для временного файла\r\n        filename = os.path.basename(pdf_object_name)\r\n        temp_path = f\"/tmp/{filename}\"\r\n        \r\n        try:\r\n            # Скачиваем PDF\r\n            self._download_pdf(pdf_object_name, temp_path)\r\n            \r\n            # Извлекаем текст\r\n            text = self._extract_text_from_pdf(temp_path)\r\n            \r\n            # Разбиваем на чанки\r\n            chunks = self._split_text(text, chunk_size, chunk_overlap)\r\n            \r\n            # Создаем документы с метаданными\r\n            documents = []\r\n            for i, chunk in enumerate(chunks):\r\n                doc = Document(\r\n                    text=chunk,\r\n                    metadata={\r\n                        \"source\": pdf_object_name,\r\n                        \"chunk_index\": i,\r\n                        \"total_chunks\": len(chunks)\r\n                    }\r\n                )\r\n                documents.append(doc)\r\n            \r\n            logger.info(f\"Created {len(documents)} chunks from {pdf_object_name}\")\r\n            return documents\r\n            \r\n        finally:\r\n            # Удаляем временный файл\r\n            if os.path.exists(temp_path):\r\n                os.remove(temp_path)
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/rag-service/app/loader.py b/rag-service/app/loader.py
+--- a/rag-service/app/loader.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/rag-service/app/loader.py	(date 1766286831192)
+@@ -8,8 +8,22 @@
+ from minio import Minio
+ from minio.error import S3Error
+ 
++# Tokenizer для чанкинга
++from transformers import AutoTokenizer
++
+ logger = logging.getLogger(__name__)
+ 
++_TOKENIZER = None
++
++def get_tokenizer():
++    global _TOKENIZER
++    if _TOKENIZER is None:
++        _TOKENIZER = AutoTokenizer.from_pretrained(
++            "/app/models/paraphrase-multilingual-MiniLM-L12-v2",
++            use_fast=True
++        )
++    return _TOKENIZER
++
+ @dataclass
+ class Document:
+     text: str
+@@ -17,6 +31,7 @@
+ 
+ 
+ class PDFLoader:
++
+     def __init__(self, minio_client: Minio, bucket_name: str):
+         self.minio_client = minio_client
+         self.bucket_name = bucket_name
+@@ -73,18 +88,42 @@
+             logger.error(f"Error extracting text from PDF {pdf_path}: {e}")
+             raise
+ 
+-    def _split_text(self, text: str, chunk_size: int = 512, chunk_overlap: int = 64) -> List[str]:
+-        """Разбиение текста на чанки"""
+-        words = text.split()
++
++
++    def _split_text_by_tokens(self, text: str, chunk_size: int = 384, chunk_overlap: int = 64) -> List[str]:
++        """
++        Token-based chunking using the model's tokenizer.
++        Ensures chunks do not exceed model's token limit (512),
++        with safety margin.
++        """
++        
++        tokenizer = get_tokenizer()
++        tokens = tokenizer.encode(
++            text,
++            add_special_tokens=False  # Без [CLS], [SEP]
++        )
++        
+         chunks = []
+         start = 0
+         
+-        while start < len(words):
++        while start < len(tokens):
+             end = start + chunk_size
+-            chunk = " ".join(words[start:end])
+-            chunks.append(chunk)
++            chunk_tokens = tokens[start:end]
++            
++            # Декодируем обратно в текст
++            chunk_text = tokenizer.decode(
++                chunk_tokens,
++                skip_special_tokens=True,
++                clean_up_tokenization_spaces=True
++            )
++            
++            chunks.append(chunk_text)
++            
++            # Переход с оверлапом
+             start = end - chunk_overlap
+-            
++            if start < 0:
++                start = 0
++        
+         return chunks
+ 
+     def load_and_chunk_pdf(self, pdf_object_name: str, chunk_size: int = 512, chunk_overlap: int = 64) -> List[Document]:
+@@ -101,7 +140,7 @@
+             text = self._extract_text_from_pdf(temp_path)
+             
+             # Разбиваем на чанки
+-            chunks = self._split_text(text, chunk_size, chunk_overlap)
++            chunks = self._split_text_by_tokens(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+             
+             # Создаем документы с метаданными
+             documents = []
+Index: backend/src/routers/story_log.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from fastapi import APIRouter, Depends, HTTPException, status\r\nfrom sqlalchemy.orm import Session\r\nfrom typing import List, Annotated\r\n\r\nfrom .. import schemas, models, database\r\n\r\ndef get_db():\r\n    db = database.SessionLocal()\r\n    try:\r\n        yield db\r\n    finally:\r\n        db.close()\r\n\r\nrouter = APIRouter(\r\n    prefix=\"/story_log\",\r\n    tags=[\"story_log\"]\r\n)\r\n\r\n@router.get(\"/\", response_model=List[schemas.StoryLogEntry])\r\ndef get_story_log_entries(\r\n    skip: int = 0, \r\n    limit: int = 100, \r\n    db: Session = Depends(get_db)\r\n):\r\n    entries = db.query(models.StoryLogEntry).offset(skip).limit(limit).all()\r\n    return entries\r\n\r\n@router.get(\"/{entry_id}\", response_model=schemas.StoryLogEntry)\r\ndef get_story_log_entry(entry_id: int, db: Session = Depends(get_db)):\r\n    entry = db.query(models.StoryLogEntry).filter(models.StoryLogEntry.id == entry_id).first()\r\n    if entry is None:\r\n        raise HTTPException(status_code=404, detail=\"Story log entry not found\")\r\n    return entry\r\n\r\n@router.post(\"/\", response_model=schemas.StoryLogEntry)\r\ndef create_story_log_entry(\r\n    entry: schemas.StoryLogEntryCreate, \r\n    db: Session = Depends(get_db)\r\n):\r\n    db_entry = models.StoryLogEntry(**entry.dict())\r\n    db.add(db_entry)\r\n    db.commit()\r\n    db.refresh(db_entry)\r\n    return db_entry\r\n\r\n@router.delete(\"/{entry_id}\")\r\ndef delete_story_log_entry(entry_id: int, db: Session = Depends(get_db)):\r\n    entry = db.query(models.StoryLogEntry).filter(models.StoryLogEntry.id == entry_id).first()\r\n    if entry is None:\r\n        raise HTTPException(status_code=404, detail=\"Story log entry not found\")\r\n    \r\n    db.delete(entry)\r\n    db.commit()\r\n    return {\"message\": \"Story log entry deleted successfully\"}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/routers/story_log.py b/backend/src/routers/story_log.py
+--- a/backend/src/routers/story_log.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/routers/story_log.py	(date 1765815570860)
+@@ -2,21 +2,17 @@
+ from sqlalchemy.orm import Session
+ from typing import List, Annotated
+ 
+-from .. import schemas, models, database
+-
+-def get_db():
+-    db = database.SessionLocal()
+-    try:
+-        yield db
+-    finally:
+-        db.close()
++from .. import models
++from .. import schemas
++from ..schemas.story_log import StoryLogEntry, StoryLogEntryCreate
++from ..database import SessionLocal, get_db
+ 
+ router = APIRouter(
+     prefix="/story_log",
+     tags=["story_log"]
+ )
+ 
+-@router.get("/", response_model=List[schemas.StoryLogEntry])
++@router.get("/", response_model=List[StoryLogEntry])
+ def get_story_log_entries(
+     skip: int = 0, 
+     limit: int = 100, 
+@@ -25,16 +21,16 @@
+     entries = db.query(models.StoryLogEntry).offset(skip).limit(limit).all()
+     return entries
+ 
+-@router.get("/{entry_id}", response_model=schemas.StoryLogEntry)
++@router.get("/{entry_id}", response_model=StoryLogEntry)
+ def get_story_log_entry(entry_id: int, db: Session = Depends(get_db)):
+     entry = db.query(models.StoryLogEntry).filter(models.StoryLogEntry.id == entry_id).first()
+     if entry is None:
+         raise HTTPException(status_code=404, detail="Story log entry not found")
+     return entry
+ 
+-@router.post("/", response_model=schemas.StoryLogEntry)
++@router.post("/", response_model=StoryLogEntry)
+ def create_story_log_entry(
+-    entry: schemas.StoryLogEntryCreate, 
++    entry: StoryLogEntryCreate, 
+     db: Session = Depends(get_db)
+ ):
+     db_entry = models.StoryLogEntry(**entry.dict())
+Index: backend/src/routers/parties.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from fastapi import APIRouter, Depends, HTTPException, status\r\nfrom sqlalchemy.orm import Session\r\nfrom typing import List, Annotated\r\n\r\nfrom .. import schemas, models, database\r\n\r\ndef get_db():\r\n    db = database.SessionLocal()\r\n    try:\r\n        yield db\r\n    finally:\r\n        db.close()\r\n\r\nrouter = APIRouter(\r\n    prefix=\"/parties\",\r\n    tags=[\"parties\"]\r\n)\r\n\r\n@router.get(\"/\", response_model=List[schemas.Party])\r\ndef get_parties(\r\n    skip: int = 0, \r\n    limit: int = 100, \r\n    db: Session = Depends(get_db)\r\n):\r\n    parties = db.query(models.Party).offset(skip).limit(limit).all()\r\n    return parties\r\n\r\n@router.get(\"/{party_id}\", response_model=schemas.Party)\r\ndef get_party(party_id: int, db: Session = Depends(get_db)):\r\n    party = db.query(models.Party).filter(models.Party.id == party_id).first()\r\n    if party is None:\r\n        raise HTTPException(status_code=404, detail=\"Party not found\")\r\n    return party\r\n\r\n@router.post(\"/\", response_model=schemas.Party)\r\ndef create_party(\r\n    party: schemas.PartyCreate, \r\n    db: Session = Depends(get_db)\r\n):\r\n    db_party = models.Party(**party.dict())\r\n    db.add(db_party)\r\n    db.commit()\r\n    db.refresh(db_party)\r\n    return db_party\r\n\r\n@router.put(\"/{party_id}\", response_model=schemas.Party)\r\ndef update_party(\r\n    party_id: int, \r\n    party: schemas.PartyCreate, \r\n    db: Session = Depends(get_db)\r\n):\r\n    db_party = db.query(models.Party).filter(models.Party.id == party_id).first()\r\n    if db_party is None:\r\n        raise HTTPException(status_code=404, detail=\"Party not found\")\r\n    \r\n    for key, value in party.dict().items():\r\n        setattr(db_party, key, value)\r\n    \r\n    db.commit()\r\n    db.refresh(db_party)\r\n    return db_party\r\n\r\n@router.delete(\"/{party_id}\")\r\ndef delete_party(party_id: int, db: Session = Depends(get_db)):\r\n    party = db.query(models.Party).filter(models.Party.id == party_id).first()\r\n    if party is None:\r\n        raise HTTPException(status_code=404, detail=\"Party not found\")\r\n    \r\n    db.delete(party)\r\n    db.commit()\r\n    return {\"message\": \"Party deleted successfully\"}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/routers/parties.py b/backend/src/routers/parties.py
+--- a/backend/src/routers/parties.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/routers/parties.py	(date 1765815556274)
+@@ -2,21 +2,17 @@
+ from sqlalchemy.orm import Session
+ from typing import List, Annotated
+ 
+-from .. import schemas, models, database
+-
+-def get_db():
+-    db = database.SessionLocal()
+-    try:
+-        yield db
+-    finally:
+-        db.close()
++from .. import models
++from .. import schemas
++from ..schemas.party import Party, PartyCreate
++from ..database import SessionLocal, get_db
+ 
+ router = APIRouter(
+     prefix="/parties",
+     tags=["parties"]
+ )
+ 
+-@router.get("/", response_model=List[schemas.Party])
++@router.get("/", response_model=List[Party])
+ def get_parties(
+     skip: int = 0, 
+     limit: int = 100, 
+@@ -25,16 +21,16 @@
+     parties = db.query(models.Party).offset(skip).limit(limit).all()
+     return parties
+ 
+-@router.get("/{party_id}", response_model=schemas.Party)
++@router.get("/{party_id}", response_model=Party)
+ def get_party(party_id: int, db: Session = Depends(get_db)):
+     party = db.query(models.Party).filter(models.Party.id == party_id).first()
+     if party is None:
+         raise HTTPException(status_code=404, detail="Party not found")
+     return party
+ 
+-@router.post("/", response_model=schemas.Party)
++@router.post("/", response_model=Party)
+ def create_party(
+-    party: schemas.PartyCreate, 
++    party: PartyCreate, 
+     db: Session = Depends(get_db)
+ ):
+     db_party = models.Party(**party.dict())
+@@ -43,10 +39,10 @@
+     db.refresh(db_party)
+     return db_party
+ 
+-@router.put("/{party_id}", response_model=schemas.Party)
++@router.put("/{party_id}", response_model=Party)
+ def update_party(
+     party_id: int, 
+-    party: schemas.PartyCreate, 
++    party: PartyCreate, 
+     db: Session = Depends(get_db)
+ ):
+     db_party = db.query(models.Party).filter(models.Party.id == party_id).first()
+Index: backend/src/routers/inventory.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from fastapi import APIRouter, Depends, HTTPException, status\r\nfrom sqlalchemy.orm import Session\r\nfrom typing import List, Annotated\r\n\r\nfrom .. import schemas, models, database\r\n\r\ndef get_db():\r\n    db = database.SessionLocal()\r\n    try:\r\n        yield db\r\n    finally:\r\n        db.close()\r\n\r\nrouter = APIRouter(\r\n    prefix=\"/inventory\",\r\n    tags=[\"inventory\"]\r\n)\r\n\r\n@router.get(\"/\", response_model=List[schemas.InventoryItem])\r\ndef get_inventory_items(\r\n    skip: int = 0, \r\n    limit: int = 100, \r\n    db: Session = Depends(get_db)\r\n):\r\n    items = db.query(models.InventoryItem).offset(skip).limit(limit).all()\r\n    return items\r\n\r\n@router.get(\"/{item_id}\", response_model=schemas.InventoryItem)\r\ndef get_inventory_item(item_id: int, db: Session = Depends(get_db)):\r\n    item = db.query(models.InventoryItem).filter(models.InventoryItem.id == item_id).first()\r\n    if item is None:\r\n        raise HTTPException(status_code=404, detail=\"Inventory item not found\")\r\n    return item\r\n\r\n@router.post(\"/\", response_model=schemas.InventoryItem)\r\ndef create_inventory_item(\r\n    item: schemas.InventoryItemCreate, \r\n    db: Session = Depends(get_db)\r\n):\r\n    db_item = models.InventoryItem(**item.dict())\r\n    db.add(db_item)\r\n    db.commit()\r\n    db.refresh(db_item)\r\n    return db_item\r\n\r\n@router.put(\"/{item_id}\", response_model=schemas.InventoryItem)\r\ndef update_inventory_item(\r\n    item_id: int, \r\n    item: schemas.InventoryItemCreate, \r\n    db: Session = Depends(get_db)\r\n):\r\n    db_item = db.query(models.InventoryItem).filter(models.InventoryItem.id == item_id).first()\r\n    if db_item is None:\r\n        raise HTTPException(status_code=404, detail=\"Inventory item not found\")\r\n    \r\n    for key, value in item.dict().items():\r\n        setattr(db_item, key, value)\r\n    \r\n    db.commit()\r\n    db.refresh(db_item)\r\n    return db_item\r\n\r\n@router.delete(\"/{item_id}\")\r\ndef delete_inventory_item(item_id: int, db: Session = Depends(get_db)):\r\n    item = db.query(models.InventoryItem).filter(models.InventoryItem.id == item_id).first()\r\n    if item is None:\r\n        raise HTTPException(status_code=404, detail=\"Inventory item not found\")\r\n    \r\n    db.delete(item)\r\n    db.commit()\r\n    return {\"message\": \"Inventory item deleted successfully\"}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/routers/inventory.py b/backend/src/routers/inventory.py
+--- a/backend/src/routers/inventory.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/routers/inventory.py	(date 1765815465664)
+@@ -2,21 +2,17 @@
+ from sqlalchemy.orm import Session
+ from typing import List, Annotated
+ 
+-from .. import schemas, models, database
+-
+-def get_db():
+-    db = database.SessionLocal()
+-    try:
+-        yield db
+-    finally:
+-        db.close()
++from .. import models
++from .. import schemas
++from ..schemas.inventory import InventoryItem, InventoryItemCreate
++from ..database import SessionLocal, get_db
+ 
+ router = APIRouter(
+     prefix="/inventory",
+     tags=["inventory"]
+ )
+ 
+-@router.get("/", response_model=List[schemas.InventoryItem])
++@router.get("/", response_model=List[InventoryItem])
+ def get_inventory_items(
+     skip: int = 0, 
+     limit: int = 100, 
+@@ -25,16 +21,16 @@
+     items = db.query(models.InventoryItem).offset(skip).limit(limit).all()
+     return items
+ 
+-@router.get("/{item_id}", response_model=schemas.InventoryItem)
++@router.get("/{item_id}", response_model=InventoryItem)
+ def get_inventory_item(item_id: int, db: Session = Depends(get_db)):
+     item = db.query(models.InventoryItem).filter(models.InventoryItem.id == item_id).first()
+     if item is None:
+         raise HTTPException(status_code=404, detail="Inventory item not found")
+     return item
+ 
+-@router.post("/", response_model=schemas.InventoryItem)
++@router.post("/", response_model=InventoryItem)
+ def create_inventory_item(
+-    item: schemas.InventoryItemCreate, 
++    item: InventoryItemCreate, 
+     db: Session = Depends(get_db)
+ ):
+     db_item = models.InventoryItem(**item.dict())
+@@ -43,10 +39,10 @@
+     db.refresh(db_item)
+     return db_item
+ 
+-@router.put("/{item_id}", response_model=schemas.InventoryItem)
++@router.put("/{item_id}", response_model=InventoryItem)
+ def update_inventory_item(
+     item_id: int, 
+-    item: schemas.InventoryItemCreate, 
++    item: InventoryItemCreate, 
+     db: Session = Depends(get_db)
+ ):
+     db_item = db.query(models.InventoryItem).filter(models.InventoryItem.id == item_id).first()
+Index: backend/src/routers/characters.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from fastapi import APIRouter, Depends, HTTPException, status\r\nfrom sqlalchemy.orm import Session\r\nfrom typing import List, Annotated\r\n\r\nfrom .. import schemas, models, database\r\n\r\ndef get_db():\r\n    db = database.SessionLocal()\r\n    try:\r\n        yield db\r\n    finally:\r\n        db.close()\r\n\r\nrouter = APIRouter(\r\n    prefix=\"/characters\",\r\n    tags=[\"characters\"]\r\n)\r\n\r\n@router.get(\"/\", response_model=List[schemas.Character])\r\ndef get_characters(\r\n    skip: int = 0, \r\n    limit: int = 100, \r\n    db: Session = Depends(get_db)\r\n):\r\n    characters = db.query(models.Character).offset(skip).limit(limit).all()\r\n    return characters\r\n\r\n@router.get(\"/{character_id}\", response_model=schemas.Character)\r\ndef get_character(character_id: int, db: Session = Depends(get_db)):\r\n    character = db.query(models.Character).filter(models.Character.id == character_id).first()\r\n    if character is None:\r\n        raise HTTPException(status_code=404, detail=\"Character not found\")\r\n    return character\r\n\r\n@router.post(\"/\", response_model=schemas.Character)\r\ndef create_character(\r\n    character: schemas.CharacterCreate, \r\n    db: Session = Depends(get_db)\r\n):\r\n    db_character = models.Character(**character.dict())\r\n    db.add(db_character)\r\n    db.commit()\r\n    db.refresh(db_character)\r\n    return db_character\r\n\r\n@router.put(\"/{character_id}\", response_model=schemas.Character)\r\ndef update_character(\r\n    character_id: int, \r\n    character: schemas.CharacterCreate, \r\n    db: Session = Depends(get_db)\r\n):\r\n    db_character = db.query(models.Character).filter(models.Character.id == character_id).first()\r\n    if db_character is None:\r\n        raise HTTPException(status_code=404, detail=\"Character not found\")\r\n    \r\n    for key, value in character.dict().items():\r\n        setattr(db_character, key, value)\r\n    \r\n    db.commit()\r\n    db.refresh(db_character)\r\n    return db_character\r\n\r\n@router.delete(\"/{character_id}\")\r\ndef delete_character(character_id: int, db: Session = Depends(get_db)):\r\n    character = db.query(models.Character).filter(models.Character.id == character_id).first()\r\n    if character is None:\r\n        raise HTTPException(status_code=404, detail=\"Character not found\")\r\n    \r\n    db.delete(character)\r\n    db.commit()\r\n    return {\"message\": \"Character deleted successfully\"}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/routers/characters.py b/backend/src/routers/characters.py
+--- a/backend/src/routers/characters.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/routers/characters.py	(date 1765815431692)
+@@ -2,21 +2,17 @@
+ from sqlalchemy.orm import Session
+ from typing import List, Annotated
+ 
+-from .. import schemas, models, database
+-
+-def get_db():
+-    db = database.SessionLocal()
+-    try:
+-        yield db
+-    finally:
+-        db.close()
++from .. import models
++from .. import schemas
++from ..schemas.character import Character, CharacterCreate
++from ..database import SessionLocal, get_db
+ 
+ router = APIRouter(
+     prefix="/characters",
+     tags=["characters"]
+ )
+ 
+-@router.get("/", response_model=List[schemas.Character])
++@router.get("/", response_model=List[Character])
+ def get_characters(
+     skip: int = 0, 
+     limit: int = 100, 
+@@ -25,16 +21,16 @@
+     characters = db.query(models.Character).offset(skip).limit(limit).all()
+     return characters
+ 
+-@router.get("/{character_id}", response_model=schemas.Character)
++@router.get("/{character_id}", response_model=Character)
+ def get_character(character_id: int, db: Session = Depends(get_db)):
+     character = db.query(models.Character).filter(models.Character.id == character_id).first()
+     if character is None:
+         raise HTTPException(status_code=404, detail="Character not found")
+     return character
+ 
+-@router.post("/", response_model=schemas.Character)
++@router.post("/", response_model=Character)
+ def create_character(
+-    character: schemas.CharacterCreate, 
++    character: CharacterCreate, 
+     db: Session = Depends(get_db)
+ ):
+     db_character = models.Character(**character.dict())
+@@ -43,10 +39,10 @@
+     db.refresh(db_character)
+     return db_character
+ 
+-@router.put("/{character_id}", response_model=schemas.Character)
++@router.put("/{character_id}", response_model=Character)
+ def update_character(
+     character_id: int, 
+-    character: schemas.CharacterCreate, 
++    character: CharacterCreate, 
+     db: Session = Depends(get_db)
+ ):
+     db_character = db.query(models.Character).filter(models.Character.id == character_id).first()
+Index: backend/src/routers/level_progression.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from fastapi import APIRouter, Depends, HTTPException, status\r\nfrom sqlalchemy.orm import Session\r\nfrom typing import List, Annotated\r\n\r\nfrom .. import schemas, models, database\r\n\r\ndef get_db():\r\n    db = database.SessionLocal()\r\n    try:\r\n        yield db\r\n    finally:\r\n        db.close()\r\n\r\nrouter = APIRouter(\r\n    prefix=\"/level_progression\",\r\n    tags=[\"level_progression\"]\r\n)\r\n\r\n@router.get(\"/\", response_model=List[schemas.LevelProgression])\r\ndef get_level_progression(\r\n    skip: int = 0, \r\n    limit: int = 100, \r\n    db: Session = Depends(get_db)\r\n):\r\n    progression = db.query(models.LevelProgression).offset(skip).limit(limit).all()\r\n    return progression\r\n\r\n@router.get(\"/{entry_id}\", response_model=schemas.LevelProgression)\r\ndef get_level_progression_entry(entry_id: int, db: Session = Depends(get_db)):\r\n    entry = db.query(models.LevelProgression).filter(models.LevelProgression.id == entry_id).first()\r\n    if entry is None:\r\n        raise HTTPException(status_code=404, detail=\"Level progression entry not found\")\r\n    return entry\r\n\r\n@router.post(\"/\", response_model=schemas.LevelProgression)\r\ndef create_level_progression_entry(\r\n    entry: schemas.LevelProgressionCreate, \r\n    db: Session = Depends(get_db)\r\n):\r\n    db_entry = models.LevelProgression(**entry.dict())\r\n    db.add(db_entry)\r\n    db.commit()\r\n    db.refresh(db_entry)\r\n    return db_entry\r\n\r\n@router.delete(\"/{entry_id}\")\r\ndef delete_level_progression_entry(entry_id: int, db: Session = Depends(get_db)):\r\n    entry = db.query(models.LevelProgression).filter(models.LevelProgression.id == entry_id).first()\r\n    if entry is None:\r\n        raise HTTPException(status_code=404, detail=\"Level progression entry not found\")\r\n    \r\n    db.delete(entry)\r\n    db.commit()\r\n    return {\"message\": \"Level progression entry deleted successfully\"}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/routers/level_progression.py b/backend/src/routers/level_progression.py
+--- a/backend/src/routers/level_progression.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/routers/level_progression.py	(date 1765815472259)
+@@ -2,21 +2,17 @@
+ from sqlalchemy.orm import Session
+ from typing import List, Annotated
+ 
+-from .. import schemas, models, database
+-
+-def get_db():
+-    db = database.SessionLocal()
+-    try:
+-        yield db
+-    finally:
+-        db.close()
++from .. import models
++from .. import schemas
++from ..schemas.level_progression import LevelProgression, LevelProgressionCreate
++from ..database import SessionLocal, get_db
+ 
+ router = APIRouter(
+     prefix="/level_progression",
+     tags=["level_progression"]
+ )
+ 
+-@router.get("/", response_model=List[schemas.LevelProgression])
++@router.get("/", response_model=List[LevelProgression])
+ def get_level_progression(
+     skip: int = 0, 
+     limit: int = 100, 
+@@ -25,16 +21,16 @@
+     progression = db.query(models.LevelProgression).offset(skip).limit(limit).all()
+     return progression
+ 
+-@router.get("/{entry_id}", response_model=schemas.LevelProgression)
++@router.get("/{entry_id}", response_model=LevelProgression)
+ def get_level_progression_entry(entry_id: int, db: Session = Depends(get_db)):
+     entry = db.query(models.LevelProgression).filter(models.LevelProgression.id == entry_id).first()
+     if entry is None:
+         raise HTTPException(status_code=404, detail="Level progression entry not found")
+     return entry
+ 
+-@router.post("/", response_model=schemas.LevelProgression)
++@router.post("/", response_model=LevelProgression)
+ def create_level_progression_entry(
+-    entry: schemas.LevelProgressionCreate, 
++    entry: LevelProgressionCreate, 
+     db: Session = Depends(get_db)
+ ):
+     db_entry = models.LevelProgression(**entry.dict())
+Index: backend/src/schemas/user.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from __future__ import annotations\r\n\r\nfrom pydantic import BaseModel, EmailStr\r\nfrom typing import List, Optional\r\nfrom datetime import datetime\r\n\r\n\r\nclass UserBase(BaseModel):\r\n    username: str\r\n    email: EmailStr\r\n\r\n\r\nclass UserCreate(UserBase):\r\n    password: str\r\n\r\n\r\nclass User(UserBase):\r\n    id: int\r\n    is_active: bool\r\n    is_superuser: bool\r\n    created_at: datetime\r\n\r\n    class Config:\r\n        from_attributes = True\r\n\r\n\r\nclass UserLogin(BaseModel):\r\n    username: str\r\n    password: str\r\n\r\n\r\nclass Token(BaseModel):\r\n    access_token: str\r\n    token_type: str\r\n\r\n\r\nclass TokenData(BaseModel):\r\n    username: Optional[str] = None
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/schemas/user.py b/backend/src/schemas/user.py
+--- a/backend/src/schemas/user.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/schemas/user.py	(date 1765813293138)
+@@ -1,38 +1,48 @@
+-from __future__ import annotations
+-
+ from pydantic import BaseModel, EmailStr
+-from typing import List, Optional
++from typing import Optional
+ from datetime import datetime
+ 
++# --- Схемы для пользователя ---
+ 
++# Базовая схема пользователя (общие поля)
+ class UserBase(BaseModel):
+     username: str
+     email: EmailStr
+ 
+-
++# Схема для создания пользователя (включает пароль)
+ class UserCreate(UserBase):
+     password: str
+ 
++# Схема для обновления пользователя (пароль опционален)
++class UserUpdate(UserBase):
++    password: Optional[str] = None
++    is_active: Optional[bool] = None
+ 
+-class User(UserBase):
++# Схема пользователя, возвращаемая из БД (включает ID, хешированный пароль и даты)
++class UserInDB(UserBase):
+     id: int
+     is_active: bool
+     is_superuser: bool
+     created_at: datetime
++    updated_at: datetime
+ 
+     class Config:
+-        from_attributes = True
++        from_attributes = True # Используется для SQLAlchemy
+ 
++# Схема пользователя, возвращаемая через API (публичная информация)
++class User(UserInDB):
++    pass # Может быть расширена позже, если нужно скрыть поля
+ 
++# --- Схема для входа (логина) ---
+ class UserLogin(BaseModel):
+     username: str
+     password: str
+ 
+-
++# --- Схема для JWT токена ---
+ class Token(BaseModel):
+     access_token: str
+     token_type: str
+ 
+-
++# --- Дополнительная схема для данных токена (опционально, но часто используется) ---
+ class TokenData(BaseModel):
+-    username: Optional[str] = None
+\ No newline at end of file
++    username: Optional[str] = None
+Index: backend/src/routers/auth.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from fastapi import APIRouter, Depends, HTTPException, status\r\nfrom sqlalchemy.orm import Session\r\n\r\nfrom src.schemas.user import User, UserCreate, UserLogin, Token\r\nfrom src.models import User as UserModel\r\nfrom src.database import SessionLocal\r\nfrom src.security import create_access_token, verify_password, get_password_hash\r\n\r\nrouter = APIRouter(\r\n    prefix=\"/auth\",\r\n    tags=[\"auth\"]\r\n)\r\n\r\ndef get_db():\r\n    db = database.SessionLocal()\r\n    try:\r\n        yield db\r\n    finally:\r\n        db.close()\r\n\r\n@router.post(\"/register\", response_model=schemas.User)\r\ndef register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):\r\n    # Проверка существования пользователя\r\n    db_user = db.query(models.User).filter(models.User.username == user.username).first()\r\n    if db_user:\r\n        raise HTTPException(\r\n            status_code=status.HTTP_400_BAD_REQUEST,\r\n            detail=\"Username already registered\"\r\n        )\r\n    \r\n    db_user = db.query(models.User).filter(models.User.email == user.email).first()\r\n    if db_user:\r\n        raise HTTPException(\r\n            status_code=status.HTTP_400_BAD_REQUEST,\r\n            detail=\"Email already registered\"\r\n        )\r\n    \r\n    # Создание нового пользователя\r\n    fake_hashed_password = get_password_hash(user.password)  # TODO: Реализовать хеширование пароля\r\n    db_user = models.User(\r\n        username=user.username,\r\n        email=user.email,\r\n        hashed_password=fake_hashed_password\r\n    )\r\n    db.add(db_user)\r\n    db.commit()\r\n    db.refresh(db_user)\r\n    \r\n    return db_user\r\n\r\n@router.post(\"/login\", response_model=schemas.Token)\r\ndef login_user(form_data: schemas.UserLogin, db: Session = Depends(get_db)):\r\n    # Поиск пользователя\r\n    user = db.query(models.User).filter(models.User.username == form_data.username).first()\r\n    if not user:\r\n        raise HTTPException(\r\n            status_code=status.HTTP_401_UNAUTHORIZED,\r\n            detail=\"Incorrect username or password\",\r\n            headers={\"WWW-Authenticate\": \"Bearer\"},\r\n        )\r\n    \r\n    # Проверка пароля\r\n    if not verify_password(form_data.password, user.hashed_password):\r\n        raise HTTPException(\r\n            status_code=status.HTTP_401_UNAUTHORIZED,\r\n            detail=\"Incorrect username or password\",\r\n            headers={\"WWW-Authenticate\": \"Bearer\"},\r\n        )\r\n    \r\n    # Создание JWT токена\r\n    access_token = create_access_token(data={\"sub\": user.username})\r\n    return {\"access_token\": access_token, \"token_type\": \"bearer\"}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/routers/auth.py b/backend/src/routers/auth.py
+--- a/backend/src/routers/auth.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/routers/auth.py	(date 1765814114229)
+@@ -1,10 +1,13 @@
+ from fastapi import APIRouter, Depends, HTTPException, status
+ from sqlalchemy.orm import Session
+-
+-from src.schemas.user import User, UserCreate, UserLogin, Token
+-from src.models import User as UserModel
+-from src.database import SessionLocal
+-from src.security import create_access_token, verify_password, get_password_hash
++from typing import Annotated
++# Используем относительные импорты, как в других роутерах
++from .. import models, security
++from ..database import SessionLocal, get_db
++# Импортируем схемы напрямую из подмодуля
++from ..schemas.user import User as UserSchema, UserCreate as UserCreateSchema, UserLogin as UserLoginSchema, Token as TokenSchema
++from ..models import User as UserModel
++from ..database import SessionLocal
+ 
+ router = APIRouter(
+     prefix="/auth",
+@@ -12,61 +15,54 @@
+ )
+ 
+ def get_db():
+-    db = database.SessionLocal()
++    db = SessionLocal() # Используем SessionLocal из относительного импорта
+     try:
+         yield db
+     finally:
+         db.close()
+ 
+-@router.post("/register", response_model=schemas.User)
+-def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+-    # Проверка существования пользователя
+-    db_user = db.query(models.User).filter(models.User.username == user.username).first()
+-    if db_user:
++@router.post("/register", response_model=UserSchema) # Используем напрямую импортированную схему
++def register_user(user: UserCreateSchema, db: Session = Depends(get_db)): # Используем UserCreateSchema
++    # Проверка существования пользователя по имени
++    db_user_by_username = db.query(UserModel).filter(UserModel.username == user.username).first() # Используем UserModel
++    if db_user_by_username:
+         raise HTTPException(
+             status_code=status.HTTP_400_BAD_REQUEST,
+             detail="Username already registered"
+         )
+-    
+-    db_user = db.query(models.User).filter(models.User.email == user.email).first()
+-    if db_user:
++    # Проверка существования пользователя по email
++    db_user_by_email = db.query(UserModel).filter(UserModel.email == user.email).first() # Используем UserModel
++    if db_user_by_email:
+         raise HTTPException(
+             status_code=status.HTTP_400_BAD_REQUEST,
+             detail="Email already registered"
+         )
+-    
++
++    # Хеширование пароля
++    hashed_password = security.get_password_hash(user.password) # Используем security
++
+     # Создание нового пользователя
+-    fake_hashed_password = get_password_hash(user.password)  # TODO: Реализовать хеширование пароля
+-    db_user = models.User(
++    db_user = UserModel( # Используем UserModel
+         username=user.username,
+         email=user.email,
+-        hashed_password=fake_hashed_password
++        hashed_password=hashed_password
+     )
+     db.add(db_user)
+     db.commit()
+     db.refresh(db_user)
+-    
+     return db_user
+ 
+-@router.post("/login", response_model=schemas.Token)
+-def login_user(form_data: schemas.UserLogin, db: Session = Depends(get_db)):
+-    # Поиск пользователя
+-    user = db.query(models.User).filter(models.User.username == form_data.username).first()
+-    if not user:
+-        raise HTTPException(
+-            status_code=status.HTTP_401_UNAUTHORIZED,
+-            detail="Incorrect username or password",
+-            headers={"WWW-Authenticate": "Bearer"},
+-        )
+-    
+-    # Проверка пароля
+-    if not verify_password(form_data.password, user.hashed_password):
++@router.post("/login", response_model=TokenSchema) # Используем напрямую импортированную схему токена
++def login_user(form_data: Annotated[UserLoginSchema, Depends()], db: Session = Depends(get_db)): # Используем UserLoginSchema
++    # Поиск пользователя по имени
++    user = db.query(UserModel).filter(UserModel.username == form_data.username).first() # Используем UserModel
++    if not user or not security.verify_password(form_data.password, user.hashed_password): # Используем security
+         raise HTTPException(
+             status_code=status.HTTP_401_UNAUTHORIZED,
+             detail="Incorrect username or password",
+             headers={"WWW-Authenticate": "Bearer"},
+         )
+-    
++
+     # Создание JWT токена
+-    access_token = create_access_token(data={"sub": user.username})
+-    return {"access_token": access_token, "token_type": "bearer"}
+\ No newline at end of file
++    access_token = security.create_access_token(data={"sub": user.username}) # Используем security
++    return {"access_token": access_token, "token_type": "bearer"}
+Index: backend/src/schemas/inventory.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from __future__ import annotations\r\n\r\nfrom pydantic import BaseModel\r\nfrom typing import List, Optional\r\nfrom datetime import datetime\r\n\r\n\r\nclass InventoryItemBase(BaseModel):\r\n    name: str\r\n    description: Optional[str] = None\r\n    quantity: int = 1\r\n    weight: float = 0.0\r\n    value: int = 0\r\n\r\n\r\nclass InventoryItemCreate(InventoryItemBase):\r\n    pass\r\n\r\n\r\nclass InventoryItem(InventoryItemBase):\r\n    id: int\r\n    character_id: int\r\n    created_at: datetime\r\n    updated_at: datetime\r\n\r\n    class Config:\r\n        from_attributes = True
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/schemas/inventory.py b/backend/src/schemas/inventory.py
+--- a/backend/src/schemas/inventory.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/schemas/inventory.py	(date 1765812664614)
+@@ -1,27 +1,38 @@
+-from __future__ import annotations
+-
+ from pydantic import BaseModel
+-from typing import List, Optional
++from typing import Optional
+ from datetime import datetime
+ 
+-
++# Shared properties
+ class InventoryItemBase(BaseModel):
+     name: str
+     description: Optional[str] = None
+     quantity: int = 1
+     weight: float = 0.0
+-    value: int = 0
++    value: int = 0  # стоимость в золотых монетах
++    character_id: int
+ 
+-
++# Properties to receive via API on creation
+ class InventoryItemCreate(InventoryItemBase):
+     pass
+ 
++# Properties to receive via API on update
++class InventoryItemUpdate(BaseModel):
++    name: Optional[str] = None
++    description: Optional[str] = None
++    quantity: Optional[int] = None
++    weight: Optional[float] = None
++    value: Optional[int] = None
++    character_id: Optional[int] = None
+ 
+-class InventoryItem(InventoryItemBase):
++# Additional properties stored in DB
++class InventoryItemInDB(InventoryItemBase):
+     id: int
+-    character_id: int
+     created_at: datetime
+     updated_at: datetime
+ 
+     class Config:
+-        from_attributes = True
+\ No newline at end of file
++        from_attributes = True
++
++# Properties to return via API
++class InventoryItem(InventoryItemInDB):
++    pass
+Index: docs/rag_service.md
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># RAG-сервис для Ai-DnD\r\n\r\nЭтот документ описывает архитектуру и использование RAG-сервиса (Retrieval-Augmented Generation) в проекте Ai-DnD.\r\n\r\n## Общее описание\r\n\r\nRAG-сервис — это микросервис, который:\r\n\r\n- Загружает и индексирует официальные PDF-книги D&D 5e из MinIO\r\n- Предоставляет API для семантического поиска по правилам игры\r\n- Интегрируется с n8n для улучшения точности ответов ИИ-ведущего\r\n- Гарантирует, что LLM не галлюцинирует правила, а использует актуальные данные из источников\r\n\r\n## Архитектура\r\n\r\n```plaintext\r\n+----------------+     +----------------+     +---------------------+\r\n|                |     |                |     |                     |\r\n|   n8n          |<--->|   rag-service  |<--->|   MinIO               |\r\n|   (Оркестратор)| HTTP |   (RAG)        | HTTP |   (Хранилище PDF)     |\r\n|                |     |                |     |                     |\r\n+----------------+     +----------------+     +---------------------+\r\n       |\r\n       |      +-----------------+\r\n       |<---->|   Chroma DB     |\r\n       |      |   (Векторное    |\r\n       |      |   хранилище)    |\r\n       |      +-----------------+\r\n       |\r\n       |      +-----------------+\r\n       |<---->|   Ollama        |\r\n       |      |   (LLM)         |\r\n       |      +-----------------+\r\n       |\r\n       v\r\n   Backend\r\n```\r\n\r\n## Компоненты сервиса\r\n\r\n### 1. PDFLoader\r\n\r\nКласс для загрузки и обработки PDF:\r\n\r\n- Подключается к MinIO по S3 API\r\n- Скачивает PDF-файлы из бакета `dnd-books`\r\n- Извлекает текст с помощью PyPDF2\r\n- Разбивает текст на чанки (512 токенов, оверлап 64)\r\n- Добавляет метаданные (источник, индекс чанка)\r\n\r\n### 2. VectorStoreManager\r\n\r\nКласс для работы с векторным хранилищем на основе Chroma DB:\r\n\r\n- Использует in-memory режим с возможностью сохранения на диск\r\n- Векторизует чанки с помощью модели `all-MiniLM-L6-v2`\r\n- Предоставляет методы для добавления документов и поиска\r\n- Автоматически сохраняет индекс между перезапусками\r\n\r\n### 3. FastAPI приложение\r\n\r\nREST API с двумя основными эндпоинтами:\r\n\r\n#### `GET /`\r\n\r\nПроверка работоспособности сервиса.\r\n\r\n**Ответ:**\r\n```json\r\n{\r\n  \"message\": \"RAG Service for AI DnD is running\"\r\n}\r\n```\r\n\r\n#### `GET /health`\r\n\r\nПроверка состояния сервиса и векторного хранилища.\r\n\r\n**Ответ (успех):**\r\n```json\r\n{\r\n  \"status\": \"healthy\",\r\n  \"vectorstore_count\": 15420,\r\n  \"message\": \"Service is ready to serve requests\"\r\n}\r\n```\r\n\r\n**Ответ (ошибка):**\r\n```json\r\n{\r\n  \"detail\": {\r\n    \"status\": \"error\",\r\n    \"message\": \"Service is not healthy\"\r\n  }\r\n}\r\n```\r\n\r\n#### `GET /retrieve`\r\n\r\nСемантический поиск по правилам D&D.\r\n\r\n**Параметры:**\r\n- `query`: строка поиска (обязательный)\r\n- `top_k`: количество возвращаемых результатов (по умолчанию 3, максимум 10)\r\n\r\n**Пример запроса:**\r\n```http\r\n/retrieve?query=как работает заклинание Fireball&top_k=3\r\n```\r\n\r\n**Ответ:**\r\n```json\r\n{\r\n  \"query\": \"как работает заклинание Fireball\",\r\n  \"context\": [\r\n    \"Заклинание Fireball 3 круга... урон 8к6 огня...\",\r\n    \"Спасбросок Ловкости для уменьшения урона...\",\r\n    \"Область действия: 20-футовая сфера...\"\r\n  ],\r\n  \"sources\": [\r\n    \"phb.pdf\"\r\n  ]\r\n}\r\n```\r\n\r\n## Инициализация при старте\r\n\r\nПри запуске сервис выполняет следующие шаги:\r\n\r\n1. Загружает конфигурацию из `config.yaml`\r\n2. Подключается к MinIO\r\n3. Проверяет существование векторного хранилища\r\n4. Если хранилище пустое:\r\n   - Скачивает все PDF из MinIO\r\n   - Извлекает текст\r\n   - Разбивает на чанки\r\n   - Векторизует и индексирует\r\n   - Сохраняет в Chroma DB\r\n5. Если хранилище уже существует — использует его\r\n\r\n## Интеграция с n8n\r\n\r\n### Обновлённый workflow: \"Player Action → AI DM Response\"\r\n\r\n```plaintext\r\n1. Игрок отправляет действие: \"Я кастую Fireball на группу орков\"\r\n2. Backend → вызывает n8n workflow\r\n3. n8n:\r\n   a. Запрашивает историю партии из PostgreSQL\r\n   b. Выполняет GET запрос к rag-service с текстом действия\r\n   c. Получает 2–3 релевантных фрагмента правил\r\n   d. Формирует объединённый промпт:\r\n        [System Prompt]\r\n        [Контекст из базы: состояние игры, персонажи, прошлые действия]\r\n        [Контекст из RAG: правила Fireball, урон, спасброски]\r\n        [Текущее действие игрока]\r\n   e. Отправляет в Ollama → получает ответ\r\n   f. Возвращает ответ в Backend\r\n4. Backend сохраняет и отправляет в Frontend\r\n```\r\n\r\n## Производительность\r\n\r\n| Метрика | Цель | Реализация |\r\n|--------|------|------------|\r\n| Время старта | < 15 сек | Предзагрузка индекса с диска |\r\n| Время поиска | < 300 мс | In-memory Chroma DB, оптимизированные embeddings |\r\n| Память | < 2 GB | Эффективное хранение векторов, очистка временных файлов |\r\n| Задержка сети | Минимальная | Запуск в той же Docker сети |\r\n\r\n## Конфигурация\r\n\r\nКонфигурация находится в `config.yaml`:\r\n\r\n```yaml\r\nbooks:\r\n  - name: \"Player's Handbook\"\r\n    file: \"phb.pdf\"\r\n    sections:\r\n      - \"Spells\"\r\n      - \"Combat\"\r\n      - \"Classes\"\r\n      - \"Equipment\"\r\n  - name: \"Dungeon Master's Guide\"\r\n    file: \"dmg.pdf\"\r\n    sections:\r\n      - \"Creating Adventures\"\r\n      - \"Treasure\"\r\n      - \"Magic Items\"\r\n  - name: \"Systems Reference Document\"\r\n    file: \"srd.pdf\"\r\n    sections:\r\n      - \"All\"\r\n\r\nminio:\r\n  bucket: \"dnd-books\"\r\n  endpoint: \"minio:9000\"\r\n\r\nvectorstore:\r\n  path: \"/app/chroma.db\"\r\n  collection_name: \"dnd_rules\"\r\n\r\nembedding:\r\n  model: \"all-MiniLM-L6-v2\"\r\n\r\npdf:\r\n  chunk_size: 512\r\n  chunk_overlap: 64\r\n```\r\n\r\n## Docker Compose\r\n\r\nСервис добавлен в `docker-compose.yml`:\r\n\r\n```yaml\r\n  rag-service:\r\n    build: \r\n      context: ../../rag-service\r\n      dockerfile: Dockerfile\r\n    container_name: ai_dnd_rag_service\r\n    ports:\r\n      - \"8080:80\"\r\n    environment:\r\n      - MINIO_ENDPOINT=minio:9000\r\n      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}\r\n      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}\r\n      - MINIO_BUCKET=dnd-books\r\n    volumes:\r\n      - ../../rag-service/chroma.db:/app/chroma.db\r\n    networks:\r\n      - ai_dnd_network\r\n    restart: unless-stopped\r\n    depends_on:\r\n      - minio\r\n```\r\n\r\n## Критерии успеха\r\n\r\n1. ✅ RAG-сервис стартует за < 15 сек (с предзагрузкой индекса)\r\n2. ✅ Поиск по `Fireball` возвращает правильный фрагмент за < 300 мс\r\n3. ✅ n8n успешно встраивает контекст в промпт Ollama\r\n4. ✅ Ollama использует данные из RAG, а не галлюцинирует правила\r\n5. ✅ Новые PDF можно добавить, просто загрузив в MinIO и перезапустив сервис\r\n\r\n## Будущие улучшения\r\n\r\n- [ ] Добавить кеширование поиска через Redis\r\n- [ ] Поддержка многоязычных embeddings (включая русский)\r\n- [ ] Автообновление индекса при обновлении PDF (через MinIO event)\r\n- [ ] Гибридный поиск: лексический (BM25) + семантический (embeddings)\r\n- [ ] Поддержка поиска по изображениям (если PDF содержат сканы)\r\n\r\nRAG-сервис значительно повышает качество и достоверность ответов ИИ-ведущего, делая игру более соответствующей правилам D&D 5e.
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/docs/rag_service.md b/docs/rag_service.md
+--- a/docs/rag_service.md	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/docs/rag_service.md	(date 1766314286863)
+@@ -53,7 +53,7 @@
+ Класс для работы с векторным хранилищем на основе Chroma DB:
+ 
+ - Использует in-memory режим с возможностью сохранения на диск
+-- Векторизует чанки с помощью модели `all-MiniLM-L6-v2`
++- Векторизует чанки с помощью модели `paraphrase-multilingual-MiniLM-L12-v2`
+ - Предоставляет методы для добавления документов и поиска
+ - Автоматически сохраняет индекс между перезапусками
+ 
+@@ -201,7 +201,7 @@
+   collection_name: "dnd_rules"
+ 
+ embedding:
+-  model: "all-MiniLM-L6-v2"
++  model: "paraphrase-multilingual-MiniLM-L12-v2"
+ 
+ pdf:
+   chunk_size: 512
+@@ -245,7 +245,7 @@
+ ## Будущие улучшения
+ 
+ - [ ] Добавить кеширование поиска через Redis
+-- [ ] Поддержка многоязычных embeddings (включая русский)
++- [x] Поддержка многоязычных embeddings (включая русский) — реализовано через модель `paraphrase-multilingual-MiniLM-L12-v2`
+ - [ ] Автообновление индекса при обновлении PDF (через MinIO event)
+ - [ ] Гибридный поиск: лексический (BM25) + семантический (embeddings)
+ - [ ] Поддержка поиска по изображениям (если PDF содержат сканы)
+Index: backend/src/schemas/level_progression.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from __future__ import annotations\r\n\r\nfrom pydantic import BaseModel\r\nfrom typing import List, Optional\r\nfrom datetime import datetime\r\n\r\n\r\nclass LevelProgressionBase(BaseModel):\r\n    level: int\r\n    experience_required: int\r\n    abilities_unlocked: Optional[str] = None\r\n\r\n\r\nclass LevelProgressionCreate(LevelProgressionBase):\r\n    pass\r\n\r\n\r\nclass LevelProgression(LevelProgressionBase):\r\n    id: int\r\n    character_id: int\r\n    created_at: datetime
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/schemas/level_progression.py b/backend/src/schemas/level_progression.py
+--- a/backend/src/schemas/level_progression.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/schemas/level_progression.py	(date 1765812691714)
+@@ -1,21 +1,30 @@
+-from __future__ import annotations
+-
+ from pydantic import BaseModel
+-from typing import List, Optional
++from typing import Optional
+ from datetime import datetime
+ 
+-
++# Shared properties
+ class LevelProgressionBase(BaseModel):
++    character_id: int
+     level: int
+     experience_required: int
+-    abilities_unlocked: Optional[str] = None
++    abilities_unlocked: Optional[str] = None  # JSON или текстовое описание разблокированных способностей
+ 
+-
++# Properties to receive via API on creation
+ class LevelProgressionCreate(LevelProgressionBase):
+     pass
+ 
++# Properties to receive via API on update
++class LevelProgressionUpdate(BaseModel):
++    abilities_unlocked: Optional[str] = None
+ 
+-class LevelProgression(LevelProgressionBase):
++# Additional properties stored in DB
++class LevelProgressionInDB(LevelProgressionBase):
+     id: int
+-    character_id: int
+-    created_at: datetime
+\ No newline at end of file
++    created_at: datetime
++
++    class Config:
++        from_attributes = True
++
++# Properties to return via API
++class LevelProgression(LevelProgressionInDB):
++    pass
+Index: .idea/workspace.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<project version=\"4\">\r\n  <component name=\"AutoImportSettings\">\r\n    <option name=\"autoReloadType\" value=\"SELECTIVE\" />\r\n  </component>\r\n  <component name=\"ChangeListManager\">\r\n    <list default=\"true\" id=\"96f069cf-ac08-4d50-b535-d573814cbc9c\" name=\"Changes\" comment=\"Initial project setup: AI-powered Dungeons &amp; Dragons assistant&#10;&#10;This commit includes:&#10;- Backend API (FastAPI) for game mechanics and rules&#10;- Frontend interface (React) for user interactions&#10;- RAG service with GPU acceleration for rule retrieval&#10;- Document processing pipeline for D&amp;D rulebooks (PDF)&#10;- Vector database (ChromaDB) for semantic search&#10;- LLM integration via Ollama for AI responses&#10;- Object storage (MinIO) for rulebook management&#10;- Workflow automation with n8n&#10;- Docker Compose configuration with GPU support&#10;- Troubleshooting guide for common issues\">\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/database/database.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/routers/actions.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/routers/auth.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/routers/characters.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/routers/dice_rolls.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/routers/inventory.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/routers/level_progression.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/routers/parties.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/routers/story_log.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/schemas/actions.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/schemas/character.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/schemas/dice_rolls.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/schemas/inventory.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/schemas/level_progression.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/schemas/party.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/schemas/story_log.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/schemas/user.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/backend/src/security.py\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/rag-service/Dockerfile.debug\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/rag-service/Dockerfile.prod\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/rag-service/VERSIONS.md\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/rag-service/requirements-app.txt\" afterDir=\"false\" />\r\n      <change afterPath=\"$PROJECT_DIR$/rag-service/requirements-base.txt\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/.dockerignore\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/.dockerignore\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/.env\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/.env\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/.idea/workspace.xml\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/.idea/workspace.xml\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/README.md\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/README.md\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/backend/requirements.txt\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/backend/requirements.txt\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/backend/src/database/__init__.py\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/backend/src/database/__init__.py\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/backend/src/models.py\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/backend/src/models.py\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/backend/src/routers/__init__.py\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/backend/src/routers/__init__.py\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/backend/src/schemas.py\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/backend/src/schemas.py\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/backend/src/schemas/__init__.py\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/backend/src/schemas/__init__.py\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/docs/api_examples.md\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/docs/api_examples.md\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/docs/architecture.md\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/docs/architecture.md\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/docs/data_schema.md\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/docs/data_schema.md\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/docs/llm_prompts.md\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/docs/llm_prompts.md\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/docs/setup_guide.md\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/docs/setup_guide.md\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/docs/troubleshooting.md\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/docs/troubleshooting.md\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/infrastructure/docker/docker-compose.yml\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/infrastructure/docker/docker-compose.yml\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/rag-service/Dockerfile\" beforeDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/rag-service/requirements.txt\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/rag-service/requirements.txt\" afterDir=\"false\" />\r\n    </list>\r\n    <option name=\"SHOW_DIALOG\" value=\"false\" />\r\n    <option name=\"HIGHLIGHT_CONFLICTS\" value=\"true\" />\r\n    <option name=\"HIGHLIGHT_NON_ACTIVE_CHANGELIST\" value=\"false\" />\r\n    <option name=\"LAST_RESOLUTION\" value=\"IGNORE\" />\r\n  </component>\r\n  <component name=\"FileTemplateManagerImpl\">\r\n    <option name=\"RECENT_TEMPLATES\">\r\n      <list>\r\n        <option value=\"Python Script\" />\r\n      </list>\r\n    </option>\r\n  </component>\r\n  <component name=\"Git.Settings\">\r\n    <option name=\"RECENT_GIT_ROOT_PATH\" value=\"$PROJECT_DIR$\" />\r\n  </component>\r\n  <component name=\"GitHubPullRequestSearchHistory\">{\r\n  &quot;lastFilter&quot;: {\r\n    &quot;state&quot;: &quot;OPEN&quot;,\r\n    &quot;assignee&quot;: &quot;Phobos-God&quot;\r\n  }\r\n}</component>\r\n  <component name=\"GithubPullRequestsUISettings\">{\r\n  &quot;selectedUrlAndAccountId&quot;: {\r\n    &quot;url&quot;: &quot;https://github.com/Phobos-God/Ai-DnD.git&quot;,\r\n    &quot;accountId&quot;: &quot;803e79ef-54e0-4a74-9db4-bde1c293e0b7&quot;\r\n  }\r\n}</component>\r\n  <component name=\"ProjectColorInfo\">{\r\n  &quot;associatedIndex&quot;: 1\r\n}</component>\r\n  <component name=\"ProjectId\" id=\"36p5ZHjFPe3wEViqMWwTfus92Ds\" />\r\n  <component name=\"ProjectLevelVcsManager\">\r\n    <ConfirmationsSetting value=\"2\" id=\"Add\" />\r\n  </component>\r\n  <component name=\"ProjectViewState\">\r\n    <option name=\"hideEmptyMiddlePackages\" value=\"true\" />\r\n    <option name=\"showLibraryContents\" value=\"true\" />\r\n  </component>\r\n  <component name=\"PropertiesComponent\">{\r\n  &quot;keyToString&quot;: {\r\n    &quot;ASKED_SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,\r\n    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,\r\n    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,\r\n    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,\r\n    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,\r\n    &quot;SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,\r\n    &quot;git-widget-placeholder&quot;: &quot;master&quot;,\r\n    &quot;settings.editor.selected.configurable&quot;: &quot;org.intellij.sdk.settings.AppSettingsConfigurable&quot;\r\n  }\r\n}</component>\r\n  <component name=\"SharedIndexes\">\r\n    <attachedChunks>\r\n      <set>\r\n        <option value=\"bundled-python-sdk-4e2b1448bda8-9a97661f3031-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-252.27397.106\" />\r\n      </set>\r\n    </attachedChunks>\r\n  </component>\r\n  <component name=\"TaskManager\">\r\n    <task active=\"true\" id=\"Default\" summary=\"Default task\">\r\n      <changelist id=\"96f069cf-ac08-4d50-b535-d573814cbc9c\" name=\"Changes\" comment=\"\" />\r\n      <created>1765690727104</created>\r\n      <option name=\"number\" value=\"Default\" />\r\n      <option name=\"presentableId\" value=\"Default\" />\r\n      <updated>1765690727104</updated>\r\n    </task>\r\n    <task id=\"LOCAL-00001\" summary=\"Initial project setup: AI-powered Dungeons &amp; Dragons assistant&#10;&#10;This commit includes:&#10;- Backend API (FastAPI) for game mechanics and rules&#10;- Frontend interface (React) for user interactions&#10;- RAG service with GPU acceleration for rule retrieval&#10;- Document processing pipeline for D&amp;D rulebooks (PDF)&#10;- Vector database (ChromaDB) for semantic search&#10;- LLM integration via Ollama for AI responses&#10;- Object storage (MinIO) for rulebook management&#10;- Workflow automation with n8n&#10;- Docker Compose configuration with GPU support&#10;- Troubleshooting guide for common issues\">\r\n      <option name=\"closed\" value=\"true\" />\r\n      <created>1765705778142</created>\r\n      <option name=\"number\" value=\"00001\" />\r\n      <option name=\"presentableId\" value=\"LOCAL-00001\" />\r\n      <option name=\"project\" value=\"LOCAL\" />\r\n      <updated>1765705778143</updated>\r\n    </task>\r\n    <option name=\"localTasksCounter\" value=\"2\" />\r\n    <servers />\r\n  </component>\r\n  <component name=\"VcsManagerConfiguration\">\r\n    <MESSAGE value=\"Initial project setup: AI-powered Dungeons &amp; Dragons assistant&#10;&#10;This commit includes:&#10;- Backend API (FastAPI) for game mechanics and rules&#10;- Frontend interface (React) for user interactions&#10;- RAG service with GPU acceleration for rule retrieval&#10;- Document processing pipeline for D&amp;D rulebooks (PDF)&#10;- Vector database (ChromaDB) for semantic search&#10;- LLM integration via Ollama for AI responses&#10;- Object storage (MinIO) for rulebook management&#10;- Workflow automation with n8n&#10;- Docker Compose configuration with GPU support&#10;- Troubleshooting guide for common issues\" />\r\n    <option name=\"LAST_COMMIT_MESSAGE\" value=\"Initial project setup: AI-powered Dungeons &amp; Dragons assistant&#10;&#10;This commit includes:&#10;- Backend API (FastAPI) for game mechanics and rules&#10;- Frontend interface (React) for user interactions&#10;- RAG service with GPU acceleration for rule retrieval&#10;- Document processing pipeline for D&amp;D rulebooks (PDF)&#10;- Vector database (ChromaDB) for semantic search&#10;- LLM integration via Ollama for AI responses&#10;- Object storage (MinIO) for rulebook management&#10;- Workflow automation with n8n&#10;- Docker Compose configuration with GPU support&#10;- Troubleshooting guide for common issues\" />\r\n  </component>\r\n</project>
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.idea/workspace.xml b/.idea/workspace.xml
+--- a/.idea/workspace.xml	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/.idea/workspace.xml	(date 1766318342862)
+@@ -5,47 +5,45 @@
+   </component>
+   <component name="ChangeListManager">
+     <list default="true" id="96f069cf-ac08-4d50-b535-d573814cbc9c" name="Changes" comment="Initial project setup: AI-powered Dungeons &amp; Dragons assistant&#10;&#10;This commit includes:&#10;- Backend API (FastAPI) for game mechanics and rules&#10;- Frontend interface (React) for user interactions&#10;- RAG service with GPU acceleration for rule retrieval&#10;- Document processing pipeline for D&amp;D rulebooks (PDF)&#10;- Vector database (ChromaDB) for semantic search&#10;- LLM integration via Ollama for AI responses&#10;- Object storage (MinIO) for rulebook management&#10;- Workflow automation with n8n&#10;- Docker Compose configuration with GPU support&#10;- Troubleshooting guide for common issues">
+-      <change afterPath="$PROJECT_DIR$/backend/src/database/database.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/routers/actions.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/routers/auth.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/routers/characters.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/routers/dice_rolls.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/routers/inventory.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/routers/level_progression.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/routers/parties.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/routers/story_log.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/schemas/actions.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/schemas/character.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/schemas/dice_rolls.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/schemas/inventory.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/schemas/level_progression.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/schemas/party.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/schemas/story_log.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/schemas/user.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/backend/src/security.py" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/rag-service/Dockerfile.debug" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/rag-service/Dockerfile.prod" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/rag-service/VERSIONS.md" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/rag-service/requirements-app.txt" afterDir="false" />
+-      <change afterPath="$PROJECT_DIR$/rag-service/requirements-base.txt" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/.dockerignore" beforeDir="false" afterPath="$PROJECT_DIR$/.dockerignore" afterDir="false" />
++      <change afterPath="$PROJECT_DIR$/docs/n8n_workflow.json" afterDir="false" />
++      <change afterPath="$PROJECT_DIR$/docs/n8n_workflow_setup.md" afterDir="false" />
++      <change afterPath="$PROJECT_DIR$/rag-service/debug/check_module_path.py" afterDir="false" />
++      <change afterPath="$PROJECT_DIR$/rag-service/debug/check_requirements.py" afterDir="false" />
+       <change beforePath="$PROJECT_DIR$/.env" beforeDir="false" afterPath="$PROJECT_DIR$/.env" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+       <change beforePath="$PROJECT_DIR$/backend/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/backend/requirements.txt" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/backend/src/database/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/database/__init__.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/database/__init__.py" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/database/database.py" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main.py" afterDir="false" />
+       <change beforePath="$PROJECT_DIR$/backend/src/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/models.py" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/backend/src/routers/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/routers/__init__.py" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/backend/src/schemas.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/schemas.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/models/__init__.py" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/routers/actions.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/routers/actions.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/routers/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/routers/auth.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/routers/characters.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/routers/characters.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/routers/dice_rolls.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/routers/dice_rolls.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/routers/inventory.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/routers/inventory.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/routers/level_progression.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/routers/level_progression.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/routers/parties.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/routers/parties.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/routers/story_log.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/routers/story_log.py" afterDir="false" />
+       <change beforePath="$PROJECT_DIR$/backend/src/schemas/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/schemas/__init__.py" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/docs/api_examples.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/api_examples.md" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/docs/architecture.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/architecture.md" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/docs/data_schema.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/data_schema.md" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/docs/llm_prompts.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/llm_prompts.md" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/docs/setup_guide.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/setup_guide.md" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/docs/troubleshooting.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/troubleshooting.md" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/schemas/character.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/schemas/character.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/schemas/dice_rolls.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/schemas/dice_rolls.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/schemas/inventory.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/schemas/inventory.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/schemas/level_progression.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/schemas/level_progression.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/schemas/party.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/schemas/party.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/schemas/story_log.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/schemas/story_log.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/schemas/user.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/schemas/user.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/backend/src/security.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/security.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/docs/rag_service.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/rag_service.md" afterDir="false" />
+       <change beforePath="$PROJECT_DIR$/infrastructure/docker/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/infrastructure/docker/docker-compose.yml" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/rag-service/Dockerfile" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/rag-service/Dockerfile.prod" beforeDir="false" afterPath="$PROJECT_DIR$/rag-service/Dockerfile.prod" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/rag-service/app/loader.py" beforeDir="false" afterPath="$PROJECT_DIR$/rag-service/app/loader.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/rag-service/app/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/rag-service/app/main.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/rag-service/app/vectorstore.py" beforeDir="false" afterPath="$PROJECT_DIR$/rag-service/app/vectorstore.py" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/rag-service/config.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/rag-service/config.yaml" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/rag-service/requirements-app.txt" beforeDir="false" afterPath="$PROJECT_DIR$/rag-service/requirements-app.txt" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/rag-service/requirements-base.txt" beforeDir="false" afterPath="$PROJECT_DIR$/rag-service/requirements-base.txt" afterDir="false" />
+       <change beforePath="$PROJECT_DIR$/rag-service/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/rag-service/requirements.txt" afterDir="false" />
+     </list>
+     <option name="SHOW_DIALOG" value="false" />
+@@ -90,12 +88,13 @@
+   &quot;keyToString&quot;: {
+     &quot;ASKED_SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
+     &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
++    &quot;Python.000.executor&quot;: &quot;Run&quot;,
+     &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+     &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+     &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+     &quot;SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
+     &quot;git-widget-placeholder&quot;: &quot;master&quot;,
+-    &quot;settings.editor.selected.configurable&quot;: &quot;org.intellij.sdk.settings.AppSettingsConfigurable&quot;
++    &quot;settings.editor.selected.configurable&quot;: &quot;project.propVCSSupport.DirectoryMappings&quot;
+   }
+ }</component>
+   <component name="SharedIndexes">
+@@ -121,7 +120,15 @@
+       <option name="project" value="LOCAL" />
+       <updated>1765705778143</updated>
+     </task>
+-    <option name="localTasksCounter" value="2" />
++    <task id="LOCAL-00002" summary="Initial project setup: AI-powered Dungeons &amp; Dragons assistant&#10;&#10;This commit includes:&#10;- Backend API (FastAPI) for game mechanics and rules&#10;- Frontend interface (React) for user interactions&#10;- RAG service with GPU acceleration for rule retrieval&#10;- Document processing pipeline for D&amp;D rulebooks (PDF)&#10;- Vector database (ChromaDB) for semantic search&#10;- LLM integration via Ollama for AI responses&#10;- Object storage (MinIO) for rulebook management&#10;- Workflow automation with n8n&#10;- Docker Compose configuration with GPU support&#10;- Troubleshooting guide for common issues">
++      <option name="closed" value="true" />
++      <created>1765810887966</created>
++      <option name="number" value="00002" />
++      <option name="presentableId" value="LOCAL-00002" />
++      <option name="project" value="LOCAL" />
++      <updated>1765810887966</updated>
++    </task>
++    <option name="localTasksCounter" value="3" />
+     <servers />
+   </component>
+   <component name="VcsManagerConfiguration">
+Index: backend/src/schemas/party.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from __future__ import annotations\r\n\r\nfrom pydantic import BaseModel\r\nfrom typing import List, Optional\r\nfrom datetime import datetime\r\n\r\n\r\nclass PartyBase(BaseModel):\r\n    name: str\r\n    description: Optional[str] = None\r\n\r\n\r\nclass PartyCreate(PartyBase):\r\n    pass\r\n\r\n\r\nclass Party(PartyBase):\r\n    id: int\r\n    leader_id: int\r\n    created_at: datetime\r\n    updated_at: datetime\r\n\r\n    class Config:\r\n        from_attributes = True\r\n\r\n\r\nclass PartyMemberBase(BaseModel):\r\n    party_id: int\r\n    character_id: int\r\n\r\n\r\nclass PartyMemberCreate(PartyMemberBase):\r\n    pass
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/schemas/party.py b/backend/src/schemas/party.py
+--- a/backend/src/schemas/party.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/schemas/party.py	(date 1765812655242)
+@@ -1,33 +1,34 @@
+-from __future__ import annotations
+-
+ from pydantic import BaseModel
+-from typing import List, Optional
++from typing import Optional, List
+ from datetime import datetime
+ 
+-
++# Shared properties
+ class PartyBase(BaseModel):
+     name: str
+     description: Optional[str] = None
++    leader_id: int
+ 
+-
++# Properties to receive via API on creation
+ class PartyCreate(PartyBase):
+     pass
+ 
++# Properties to receive via API on update
++class PartyUpdate(BaseModel):
++    name: Optional[str] = None
++    description: Optional[str] = None
++    leader_id: Optional[int] = None
+ 
+-class Party(PartyBase):
++# Additional properties stored in DB
++class PartyInDB(PartyBase):
+     id: int
+-    leader_id: int
+     created_at: datetime
+     updated_at: datetime
+ 
+     class Config:
+         from_attributes = True
+ 
+-
+-class PartyMemberBase(BaseModel):
+-    party_id: int
+-    character_id: int
+-
+-
+-class PartyMemberCreate(PartyMemberBase):
+-    pass
+\ No newline at end of file
++# Properties to return via API
++class Party(PartyInDB):
++    # Optionally include member IDs or simplified member details here if needed
++    # members: List[int] # This would require handling the many-to-many relationship differently
++    pass
+Index: backend/src/models.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Float\r\nfrom sqlalchemy.orm import relationship\r\nfrom .database import Base\r\nimport datetime\r\n\r\n\r\nclass User(Base):\r\n    __tablename__ = \"users\"\r\n\r\n    id = Column(Integer, primary_key=True, index=True)\r\n    username = Column(String(50), unique=True, index=True, nullable=False)\r\n    email = Column(String(100), unique=True, index=True, nullable=False)\r\n    hashed_password = Column(String(255), nullable=False)\r\n    is_active = Column(Boolean, default=True)\r\n    is_superuser = Column(Boolean, default=False)\r\n    created_at = Column(DateTime, default=datetime.datetime.utcnow)\r\n    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)\r\n\r\n    # Связь с персонажами\r\n    characters = relationship(\"Character\", back_populates=\"owner\")\r\n\r\n\r\nclass Character(Base):\r\n    __tablename__ = \"characters\"\r\n\r\n    id = Column(Integer, primary_key=True, index=True)\r\n    name = Column(String(100), nullable=False)\r\n    race = Column(String(50), nullable=False)\r\n    character_class = Column(String(50), nullable=False)\r\n    level = Column(Integer, default=1)\r\n    health_points = Column(Integer, default=10)\r\n    max_health_points = Column(Integer, default=10)\r\n    experience = Column(Integer, default=0)\r\n    strength = Column(Integer, default=10)\r\n    dexterity = Column(Integer, default=10)\r\n    constitution = Column(Integer, default=10)\r\n    intelligence = Column(Integer, default=10)\r\n    wisdom = Column(Integer, default=10)\r\n    charisma = Column(Integer, default=10)\r\n    gold = Column(Integer, default=0)\r\n    description = Column(Text)\r\n    image_url = Column(String(255))\r\n    owner_id = Column(Integer, ForeignKey(\"users.id\"))\r\n    created_at = Column(DateTime, default=datetime.datetime.utcnow)\r\n    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)\r\n\r\n    # Связи\r\n    owner = relationship(\"User\", back_populates=\"characters\")\r\n    party = relationship(\"Party\", back_populates=\"leader\")\r\n    inventory_items = relationship(\"InventoryItem\", back_populates=\"character\")\r\n    actions = relationship(\"CharacterAction\", back_populates=\"character\")\r\n    story_log_entries = relationship(\"StoryLogEntry\", back_populates=\"character\")\r\n\r\n\r\nclass Party(Base):\r\n    __tablename__ = \"parties\"\r\n\r\n    id = Column(Integer, primary_key=True, index=True)\r\n    name = Column(String(100), nullable=False)\r\n    description = Column(Text)\r\n    leader_id = Column(Integer, ForeignKey(\"characters.id\"))\r\n    created_at = Column(DateTime, default=datetime.datetime.utcnow)\r\n    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)\r\n\r\n    # Связи\r\n    leader = relationship(\"Character\", back_populates=\"party\")\r\n    members = relationship(\"Character\", secondary=\"party_members\", back_populates=\"parties\")\r\n\r\n\r\nclass PartyMember(Base):\r\n    __tablename__ = \"party_members\"\r\n\r\n    party_id = Column(Integer, ForeignKey(\"parties.id\"), primary_key=True)\r\n    character_id = Column(Integer, ForeignKey(\"characters.id\"), primary_key=True)\r\n\r\n\r\nclass InventoryItem(Base):\r\n    __tablename__ = \"inventory_items\"\r\n\r\n    id = Column(Integer, primary_key=True, index=True)\r\n    name = Column(String(100), nullable=False)\r\n    description = Column(Text)\r\n    quantity = Column(Integer, default=1)\r\n    weight = Column(Float, default=0.0)\r\n    value = Column(Integer, default=0)  # стоимость в золотых монетах\r\n    character_id = Column(Integer, ForeignKey(\"characters.id\"))\r\n    created_at = Column(DateTime, default=datetime.datetime.utcnow)\r\n    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)\r\n\r\n    # Связи\r\n    character = relationship(\"Character\", back_populates=\"inventory_items\")\r\n\r\n\r\nclass CharacterAction(Base):\r\n    __tablename__ = \"character_actions\"\r\n\r\n    id = Column(Integer, primary_key=True, index=True)\r\n    character_id = Column(Integer, ForeignKey(\"characters.id\"))\r\n    action_type = Column(String(50), nullable=False)  # attack, spell, skill_check, etc.\r\n    target = Column(String(100))\r\n    roll_result = Column(Integer)\r\n    modifier = Column(Integer)\r\n    total = Column(Integer)\r\n    description = Column(Text)\r\n    created_at = Column(DateTime, default=datetime.datetime.utcnow)\r\n\r\n    # Связи\r\n    character = relationship(\"Character\", back_populates=\"actions\")\r\n\r\n\r\nclass StoryLogEntry(Base):\r\n    __tablename__ = \"story_log\"\r\n\r\n    id = Column(Integer, primary_key=True, index=True)\r\n    character_id = Column(Integer, ForeignKey(\"characters.id\"))\r\n    content = Column(Text, nullable=False)\r\n    created_at = Column(DateTime, default=datetime.datetime.utcnow)\r\n\r\n    # Связи\r\n    character = relationship(\"Character\", back_populates=\"story_log_entries\")\r\n\r\n\r\nclass DiceRoll(Base):\r\n    __tablename__ = \"dice_rolls\"\r\n\r\n    id = Column(Integer, primary_key=True, index=True)\r\n    character_id = Column(Integer, ForeignKey(\"characters.id\"))\r\n    dice_type = Column(String(10), nullable=False)  # d4, d6, d8, d10, d12, d20, d100\r\n    roll_result = Column(Integer, nullable=False)\r\n    modifier = Column(Integer, default=0)\r\n    total = Column(Integer, nullable=False)\r\n    description = Column(Text)\r\n    created_at = Column(DateTime, default=datetime.datetime.utcnow)\r\n\r\n    # Связи\r\n    character = relationship(\"Character\", back_populates=\"dice_rolls\")\r\n\r\n\r\nclass LevelProgression(Base):\r\n    __tablename__ = \"level_progression\"\r\n\r\n    id = Column(Integer, primary_key=True, index=True)\r\n    character_id = Column(Integer, ForeignKey(\"characters.id\"))\r\n    level = Column(Integer, nullable=False)\r\n    experience_required = Column(Integer, nullable=False)\r\n    abilities_unlocked = Column(Text)  # JSON or text description of unlocked abilities\r\n    created_at = Column(DateTime, default=datetime.datetime.utcnow)\r\n\r\n    # Связи\r\n    character = relationship(\"Character\", back_populates=\"level_progression\")\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/models.py b/backend/src/models.py
+--- a/backend/src/models.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/models.py	(date 1766270719686)
+@@ -3,7 +3,6 @@
+ from .database import Base
+ import datetime
+ 
+-
+ class User(Base):
+     __tablename__ = "users"
+ 
+@@ -46,10 +45,13 @@
+ 
+     # Связи
+     owner = relationship("User", back_populates="characters")
+-    party = relationship("Party", back_populates="leader")
++    party = relationship("Party", back_populates="members")
+     inventory_items = relationship("InventoryItem", back_populates="character")
+     actions = relationship("CharacterAction", back_populates="character")
+     story_log_entries = relationship("StoryLogEntry", back_populates="character")
++    dice_rolls = relationship("DiceRoll", back_populates="character")
++    level_progression = relationship("LevelProgression", back_populates="character")
++    parties = relationship("Party", secondary="party_members", back_populates="members")
+ 
+ 
+ class Party(Base):
+@@ -64,6 +66,7 @@
+ 
+     # Связи
+     leader = relationship("Character", back_populates="party")
++    # Обратите внимание: для secondary используется строковое имя таблицы
+     members = relationship("Character", secondary="party_members", back_populates="parties")
+ 
+ 
+Index: backend/src/main.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from fastapi import FastAPI\r\nfrom fastapi.middleware.cors import CORSMiddleware\r\n\r\nfrom .database import engine\r\nfrom . import models\r\nfrom .routers import auth, characters, parties, actions, story_log, dice_rolls, inventory, level_progression\r\n\r\napp = FastAPI(title=\"AI DnD Backend\", description=\"Backend API for AI Dungeon Master\")\r\n\r\n# Создание таблиц в базе данных\r\nmodels.Base.metadata.create_all(bind=engine)\r\n\r\n# Настройка CORS\r\napp.add_middleware(\r\n    CORSMiddleware,\r\n    allow_origins=[\"*\"],  # В продакшене нужно указать конкретные домены\r\n    allow_credentials=True,\r\n    allow_methods=[\"*\"],\r\n    allow_headers=[\"*\"],\r\n)\r\n\r\n# Подключение роутеров\r\napp.include_router(auth.router, prefix=\"/api\", tags=[\"auth\"])\r\napp.include_router(characters.router, prefix=\"/api\", tags=[\"characters\"])\r\napp.include_router(parties.router, prefix=\"/api\", tags=[\"parties\"])\r\napp.include_router(actions.router, prefix=\"/api\", tags=[\"actions\"])\r\napp.include_router(story_log.router, prefix=\"/api\", tags=[\"story_log\"])\r\napp.include_router(dice_rolls.router, prefix=\"/api\", tags=[\"dice_rolls\"])\r\napp.include_router(inventory.router, prefix=\"/api\", tags=[\"inventory\"])\r\napp.include_router(level_progression.router, prefix=\"/api\", tags=[\"level_progression\"])\r\n\r\n@app.get(\"/\")\r\nasync def root():\r\n    return {\"message\": \"Welcome to AI DnD Backend\"}\r\n\r\n@app.get(\"/health\")\r\nasync def health_check():\r\n    return {\"status\": \"healthy\"}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/src/main.py b/backend/src/main.py
+--- a/backend/src/main.py	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/src/main.py	(date 1765814133600)
+@@ -1,14 +1,13 @@
+ from fastapi import FastAPI
+ from fastapi.middleware.cors import CORSMiddleware
+-
+-from .database import engine
++from .database import engine, Base
+ from . import models
+ from .routers import auth, characters, parties, actions, story_log, dice_rolls, inventory, level_progression
+ 
+ app = FastAPI(title="AI DnD Backend", description="Backend API for AI Dungeon Master")
+ 
+ # Создание таблиц в базе данных
+-models.Base.metadata.create_all(bind=engine)
++Base.metadata.create_all(bind=engine)
+ 
+ # Настройка CORS
+ app.add_middleware(
+@@ -35,4 +34,4 @@
+ 
+ @app.get("/health")
+ async def health_check():
+-    return {"status": "healthy"}
+\ No newline at end of file
++    return {"status": "healthy"}
+Index: backend/requirements.txt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>fastapi>=0.104.0\r\nuvicorn>=0.23.0\r\nsqlalchemy>=2.0.0\r\npsycopg2-binary>=2.9.0\r\npython-dotenv>=1.0.0\r\npydantic[email]>=2.0.0\r\nalembic>=1.10.0\r\ncryptography>=41.0.0\r\nminio>=7.1.0\r\nhttpx>=0.24.0\r\npython-multipart>=0.0.6\r\nPyJWT>=2.8.0\r\npasslib>=1.7.0\r\nbcrypt>=4.0.0
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+--- a/backend/requirements.txt	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/backend/requirements.txt	(date 1765813008956)
+@@ -9,6 +9,6 @@
+ minio>=7.1.0
+ httpx>=0.24.0
+ python-multipart>=0.0.6
+-PyJWT>=2.8.0
++python-jose[cryptography]>=3.3.0
+ passlib>=1.7.0
+ bcrypt>=4.0.0
+\ No newline at end of file
+Index: .idea/vcs.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<project version=\"4\">\r\n  <component name=\"VcsDirectoryMappings\">\r\n    <mapping directory=\"$PROJECT_DIR$\" vcs=\"Git\" />\r\n  </component>\r\n</project>
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.idea/vcs.xml b/.idea/vcs.xml
+--- a/.idea/vcs.xml	(revision 0b60a16b2068e3e64c34e939e54f9dc357fb70c2)
++++ b/.idea/vcs.xml	(date 1766313378033)
+@@ -2,5 +2,6 @@
+ <project version="4">
+   <component name="VcsDirectoryMappings">
+     <mapping directory="$PROJECT_DIR$" vcs="Git" />
++    <mapping directory="$PROJECT_DIR$/models/paraphrase-multilingual-MiniLM-L12-v2" vcs="Git" />
+   </component>
+ </project>
+\ No newline at end of file
+diff --git a/backend/src/models/__init__.py b/backend/src/models/__init__.py
+deleted file mode 100644

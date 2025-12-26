@@ -77,11 +77,15 @@ WORKDIR /app
 # Копирование приложения
 COPY app/ /app/
 
+# Установка прав на скопированные файлы приложения
+RUN chown -R appuser:appuser /app
+
 # Копирование конфигурации
 COPY config.yaml /app/config.yaml
 
 # Создание директории для векторного хранилища
-RUN mkdir -p /app/chroma.db
+RUN mkdir -p /app/chroma.db && \
+    chown -R appuser:appuser /app
 
 # Смена пользователя на безопасного
 USER appuser
@@ -90,7 +94,7 @@ USER appuser
 EXPOSE 8080
 
 # Добавление HEALTHCHECK
-HEALTHCHECK CMD curl -f http://localhost:80/health || exit 1
+HEALTHCHECK CMD curl -f http://localhost:8080/health || exit 1
 
 # Запуск приложения
-CMD ["python3.11", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
+CMD ["python3.11", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]

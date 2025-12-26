@@ -8,7 +8,21 @@ import yaml
 from minio import Minio
 from minio.error import S3Error
 
+# Tokenizer для чанкинга
+from transformers import AutoTokenizer
+
 logger = logging.getLogger(__name__)
+
+_TOKENIZER = None
+
+def get_tokenizer():
+    global _TOKENIZER
+    if _TOKENIZER is None:
+        _TOKENIZER = AutoTokenizer.from_pretrained(
+            "/app/models/paraphrase-multilingual-MiniLM-L12-v2",
+            use_fast=True
+        )
+    return _TOKENIZER
 
 @dataclass
 class Document:
@@ -17,6 +31,7 @@ class Document:
 
 
 class PDFLoader:
+
     def __init__(self, minio_client: Minio, bucket_name: str):
         self.minio_client = minio_client
         self.bucket_name = bucket_name
@@ -73,18 +88,42 @@ class PDFLoader:
             logger.error(f"Error extracting text from PDF {pdf_path}: {e}")
             raise
 
-    def _split_text(self, text: str, chunk_size: int = 512, chunk_overlap: int = 64) -> List[str]:
-        """Разбиение текста на чанки"""
-        words = text.split()
+
+
+    def _split_text_by_tokens(self, text: str, chunk_size: int = 384, chunk_overlap: int = 64) -> List[str]:
+        """
+        Token-based chunking using the model's tokenizer.
+        Ensures chunks do not exceed model's token limit (512),
+        with safety margin.
+        """
+        
+        tokenizer = get_tokenizer()
+        tokens = tokenizer.encode(
+            text,
+            add_special_tokens=False  # Без [CLS], [SEP]
+        )
+        
         chunks = []
         start = 0
         
-        while start < len(words):
+        while start < len(tokens):
             end = start + chunk_size
-            chunk = " ".join(words[start:end])
-            chunks.append(chunk)
-            start = end - chunk_overlap
+            chunk_tokens = tokens[start:end]
             
+            # Декодируем обратно в текст
+            chunk_text = tokenizer.decode(
+                chunk_tokens,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=True
+            )
+            
+            chunks.append(chunk_text)
+            
+            # Переход с оверлапом
+            start = end - chunk_overlap
+            if start < 0:
+                start = 0
+        
         return chunks
 
     def load_and_chunk_pdf(self, pdf_object_name: str, chunk_size: int = 512, chunk_overlap: int = 64) -> List[Document]:
@@ -101,7 +140,7 @@ class PDFLoader:
             text = self._extract_text_from_pdf(temp_path)
             
             # Разбиваем на чанки
-            chunks = self._split_text(text, chunk_size, chunk_overlap)
+            chunks = self._split_text_by_tokens(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
             
             # Создаем документы с метаданными
             documents = []

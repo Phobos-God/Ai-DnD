@@ -2,21 +2,17 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Annotated
 
-from .. import schemas, models, database
-
-def get_db():
-    db = database.SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+from .. import models
+from .. import schemas
+from ..schemas.actions import CharacterAction, CharacterActionCreate
+from ..database import SessionLocal, get_db
 
 router = APIRouter(
     prefix="/actions",
     tags=["actions"]
 )
 
-@router.get("/", response_model=List[schemas.CharacterAction])
+@router.get("/", response_model=List[CharacterAction])
 def get_actions(
     skip: int = 0, 
     limit: int = 100, 
@@ -25,16 +21,16 @@ def get_actions(
     actions = db.query(models.CharacterAction).offset(skip).limit(limit).all()
     return actions
 
-@router.get("/{action_id}", response_model=schemas.CharacterAction)
+@router.get("/{action_id}", response_model=CharacterAction)
 def get_action(action_id: int, db: Session = Depends(get_db)):
     action = db.query(models.CharacterAction).filter(models.CharacterAction.id == action_id).first()
     if action is None:
         raise HTTPException(status_code=404, detail="Action not found")
     return action
 
-@router.post("/", response_model=schemas.CharacterAction)
+@router.post("/", response_model=CharacterAction)
 def create_action(
-    action: schemas.CharacterActionCreate, 
+    action: CharacterActionCreate, 
     db: Session = Depends(get_db)
 ):
     db_action = models.CharacterAction(**action.dict())

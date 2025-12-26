@@ -1,14 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-from .database import engine
+from .database import engine, Base
 from . import models
 from .routers import auth, characters, parties, actions, story_log, dice_rolls, inventory, level_progression
 
 app = FastAPI(title="AI DnD Backend", description="Backend API for AI Dungeon Master")
 
 # Создание таблиц в базе данных
-models.Base.metadata.create_all(bind=engine)
+Base.metadata.create_all(bind=engine)
 
 # Настройка CORS
 app.add_middleware(

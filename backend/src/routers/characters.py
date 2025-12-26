@@ -2,21 +2,17 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Annotated
 
-from .. import schemas, models, database
-
-def get_db():
-    db = database.SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+from .. import models
+from .. import schemas
+from ..schemas.character import Character, CharacterCreate
+from ..database import SessionLocal, get_db
 
 router = APIRouter(
     prefix="/characters",
     tags=["characters"]
 )
 
-@router.get("/", response_model=List[schemas.Character])
+@router.get("/", response_model=List[Character])
 def get_characters(
     skip: int = 0, 
     limit: int = 100, 
@@ -25,16 +21,16 @@ def get_characters(
     characters = db.query(models.Character).offset(skip).limit(limit).all()
     return characters
 
-@router.get("/{character_id}", response_model=schemas.Character)
+@router.get("/{character_id}", response_model=Character)
 def get_character(character_id: int, db: Session = Depends(get_db)):
     character = db.query(models.Character).filter(models.Character.id == character_id).first()
     if character is None:
         raise HTTPException(status_code=404, detail="Character not found")
     return character
 
-@router.post("/", response_model=schemas.Character)
+@router.post("/", response_model=Character)
 def create_character(
-    character: schemas.CharacterCreate, 
+    character: CharacterCreate, 
     db: Session = Depends(get_db)
 ):
     db_character = models.Character(**character.dict())
@@ -43,10 +39,10 @@ def create_character(
     db.refresh(db_character)
     return db_character
 
-@router.put("/{character_id}", response_model=schemas.Character)
+@router.put("/{character_id}", response_model=Character)
 def update_character(
     character_id: int, 
-    character: schemas.CharacterCreate, 
+    character: CharacterCreate, 
     db: Session = Depends(get_db)
 ):
     db_character = db.query(models.Character).filter(models.Character.id == character_id).first()

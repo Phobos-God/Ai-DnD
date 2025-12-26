@@ -1,0 +1,97 @@
+{
+ "name": "Действие игрока → Ответ ИИ в личных сообщениях",
+ "узлы": [
+ {
+ "параметры": {
+ "httpMethod": "POST",
+ "путь": "9454499c-1121-471a-a76c-38f1f3026ed2",
+ "опции": {
+ "rawBody": "={\n \"status\": \"received\",\n \"message\": \"Действие принято к обработке\"\n}",
+ "responseData": "JSON",
+ "responseHeaders": {
+ "entries": [
+ {
+ "name": "Content-Type",
+ "value": "application/json"
+ }
+ ]
+ }
+ },
+ "type": "n8n-nodes-base.webhook",
+ "typeVersion": 2.1,
+ "position": [
+ 96,
+ -64
+ ],
+ "id": "17d36202-0c8d-4e54-b119-9a831d1cba1b",
+ "name": "Webhook",
+ "webhookId": "9454499c-1121-471a-a76c-38f1f3026ed2"
+ },
+ {
+ "параметры": {
+ "url": "http://backend:8000/api/story_log?limit=30",
+ "опции": {
+ "ответ": {
+ "ответ": {
+ "формат ответа": "json"
+ }
+ }
+ }
+ },
+ "type": "n8n-nodes-base.httpRequest",
+ "typeVersion": 4.3,
+ "position": [
+ 288,
+ -256
+ ],
+ "id": "6e800c2a-9693-466c-a623-e59b4509b015",
+ "name": "HTTP-запрос",
+ "alwaysOutputData": false
+ },
+ {
+ "parameters": {
+ "url": "http://rag-service:8080/retrieve",
+ "sendQuery": true,
+ "queryParameters": {
+ "parameters": [
+ {
+ "name": "query",
+ "value": "{{$json[\"action\"]}}"
+ },
+ {
+ "name": "top_k",
+ "value": "2"
+ }
+ ]
+ },
+ "options": {
+ "response": {
+ "response": {
+ "responseFormat": "json"
+ }
+ }
+ }
+ },
+ "type": "n8n-nodes-base.httpRequest",
+ "typeVersion": 4.3,
+ "position": [
+ 304,
+ 144
+ ],
+ "id": "00564369-6a76-4e23-9029-0c5416df073a",
+ "name": "HTTP-запрос 1"
+ },
+ {
+ "параметры": {},
+ "тип": "n8n-nodes-base.merge",
+ "версия типа": 3.2,
+ "позиция": [
+ 544,
+ -96
+ ],
+ "id": "b021749c-778e-46b8-8d22-05c1967524e4",
+ "name": "Слияние"
+ },
+ {
+ "parameters": {
+ "jsCode": "/ ** \n * Полный, надежный функциональный узел для n8n \n * - Считывает карту ролей из элементов [0].json.roles или статических данных рабочего процесса \n * - Извлекает текст проигрывателя из множества возможных полей webhook (надежный) \n * - Нормализует и сопоставляет триггеры с логикой, дружественной к подстроке / stem (работает для русского языка) \n * - Учитывает session_state и явные переопределения ролей \n * - Объединяет параметры ролей (системный текст, температура, max_tokens, stop_sequences, useChat) \n * - Необязательно генерирует небольшое совпадение (настраиваемая вероятность) \n * - Создает конечную полезную нагрузку для Ollama: либо {приглашение, метаданные, ollama }, либо {система, пользователь, метаданные, ollama } \n * - Возвращает отладочную информацию, помогающую отслеживать выбор и соответствие \n * \n * Использование: \n * - Поместите ваши полные роли в формате JSON в Set node (Mode: JSON) в качестве ключа верхнего уровня \"роли\" \n * - Подключите Set -> Function -> Ollama \n * - Убедитесь, что Ollama node считывает параметры из возвращенных json. Пример: {{$json[\"ollama\"].temperature}}\n *\n * Вывод:\n * - itemsOut[0].json содержит:\n * - debug: подробное внутреннее состояние \n * - приглашение ИЛИ system+ user \n * - метаданные: роль, matched_triggers, достоверность, reason_for_selection, оценки \n * - ollama: модель, base_url, температура, max_tokens, stop_sequences \n */\n\nconst itemsOut = [];\n\nфункция safeParseRoles(maybe) {\n if (!maybe) возвращает null;\n if (typeof maybe === 'object') возвращает maybe;\n if (typeof maybe === 'string') {\n try { return JSON.parse(maybe); } catch (e) { return null; }\n }\n return null;\n}\n\nфункция extractText(field) {\n if (!field) return \"\" ;\n if (поле typeof === \"строка\") return field;\n if (Array.isArray(field)) return field.map(x => (typeof x === \"строка\" ? x : JSON.stringify(x))).join(\"\\n\");\n try { return JSON.stringify(field); } catch (e) { return \"\"; }\n}\n\nфункция normalizeText(s) {\n if (!s) return \"\";\n // В нижнем регистре сохранить буквы / цифры / пробелы, свернуть пробелы \n вернуть s.toLowerCase().replace(/[^\\p{L} \\p{N}\\s]/gu, \" \\

@@ -3,7 +3,6 @@ from sqlalchemy.orm import relationship
 from .database import Base
 import datetime
 
-
 class User(Base):
     __tablename__ = "users"
 
@@ -46,10 +45,13 @@ class Character(Base):
 
     # Связи
     owner = relationship("User", back_populates="characters")
-    party = relationship("Party", back_populates="leader")
+    party = relationship("Party", back_populates="members")
     inventory_items = relationship("InventoryItem", back_populates="character")
     actions = relationship("CharacterAction", back_populates="character")
     story_log_entries = relationship("StoryLogEntry", back_populates="character")
+    dice_rolls = relationship("DiceRoll", back_populates="character")
+    level_progression = relationship("LevelProgression", back_populates="character")
+    parties = relationship("Party", secondary="party_members", back_populates="members")
 
 
 class Party(Base):
@@ -64,6 +66,7 @@ class Party(Base):
 
     # Связи
     leader = relationship("Character", back_populates="party")
+    # Обратите внимание: для secondary используется строковое имя таблицы
     members = relationship("Character", secondary="party_members", back_populates="parties")
 
 

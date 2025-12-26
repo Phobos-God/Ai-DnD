@@ -34,6 +34,11 @@ services:
     networks:
       - ai_dnd_network
     restart: unless-stopped
+    healthcheck:  # Новый healthcheck
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
 
   # Ollama - локальный LLM сервер
   ollama:
@@ -54,18 +59,39 @@ services:
               count: 1
               capabilities: [gpu]
 
+  # Redis - для очереди выполнения n8n
+  redis:
+    image: redis:7-alpine
+    container_name: ai_dnd_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - ai_dnd_network
+    command: redis-server --save 60 1 --loglevel warning
+
   # n8n - оркестратор workflow
   n8n:
-    image: n8nio/n8n
+    image: n8nio/n8n:2.0.3
     container_name: ai_dnd_n8n
     environment:
-      - N8N_HOST=ai-dnd-n8n.local
+      - N8N_VERSION=2.0.3
+      - N8N_HOST=localhost
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
       - NODE_ENV=production
       - WEBHOOK_URL=http://localhost:5678/
-      # Отключение регистрации и входа через внешние сервисы для безопасности
-      - N8N_USER_MANAGEMENT_DISABLED=true
+      - N8N_USER_MANAGEMENT_DISABLED=false
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=verystrongpassword2025!@#
+      - N8N_ENCRYPTION_KEY=thisisaverysecretkeyfor2025encryption123456789012
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_BULL_REDIS_PORT=6379
       - GENERIC_TIMEZONE=Europe/Moscow
     volumes:
       - n8n_data:/home/node/.n8n
@@ -77,6 +103,7 @@ services:
     depends_on:
       - backend
       - rag-service
+      - redis
 
   # Backend (FastAPI)
   backend:
@@ -137,11 +164,15 @@ services:
       - ../../rag-service/chroma.db:/app/chroma.db
       # Монтирование директории для временных файлов
       - ../../minio_data/dnd-books:/app/dnd-books:ro
+      - ../../rag-service/chroma.db:/app/chroma.db
+      - ../../minio_data/dnd-books:/app/dnd-books:ro
+      - E:/Ai-DnD/models:/app/models:ro  # Монтируем всю папку models в контейнер
     networks:
       - ai_dnd_network
     restart: unless-stopped
-    depends_on:
-      - minio
+    depends_on:  # Изменённый depends_on
+      minio:
+        condition: service_healthy  # Ждёт healthcheck MinIO
     deploy:
       resources:
         limits:
@@ -170,3 +201,4 @@ volumes:
     # Для хранения векторного индекса ChromaDB
   rag_temp_data:
     # Для временных файлов при обработке PDF
+  redis_data:
